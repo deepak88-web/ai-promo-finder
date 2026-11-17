@@ -1,9 +1,10 @@
 
+import argparse
 import json
 import re
 from pathlib import Path
 
-from src.llm.providers.gemini_provider import generate_json
+from src.llm.provider_router import get_provider
 
 
 # --------------------------------------------------
@@ -21,32 +22,49 @@ PROMPT_PATH = (
     / "event_identification.txt"
 )
 
-INPUT_OUTPUT_PATH = (
-    PROJECT_ROOT / "outputs" / "reports"
-    / "layer1_episode22_input.json"
-)
-
-RESULT_OUTPUT_PATH = (
-    PROJECT_ROOT / "outputs" / "raw"
-    / "layer1_episode22_events.json"
-)
-
 
 # --------------------------------------------------
-# 2. Generate stable IDs
+# 2. Episode identification and output paths
 # --------------------------------------------------
 
-def get_episode_id(episode_name):
+def get_episode_number(episode_name):
+    """Extract the episode number from an episode name."""
 
-    match = re.search(r"(\d+)", episode_name)
+    match = re.search(r"(\d+)", str(episode_name))
 
     if not match:
         raise ValueError(
             f"Could not extract episode number: {episode_name}"
         )
 
-    return f"EP{int(match.group(1)):03d}"
+    return int(match.group(1))
 
+
+def get_episode_id(episode_name):
+    """Convert Episode 22 into EP022."""
+
+    return f"EP{get_episode_number(episode_name):03d}"
+
+
+def get_output_paths(episode_number):
+    """Create episode-specific input and result file paths."""
+
+    input_output_path = (
+        PROJECT_ROOT / "outputs" / "reports"
+        / f"layer1_episode{episode_number}_input.json"
+    )
+
+    result_output_path = (
+        PROJECT_ROOT / "outputs" / "raw"
+        / f"layer1_episode{episode_number}_events.json"
+    )
+
+    return input_output_path, result_output_path
+
+
+# --------------------------------------------------
+# 3. Generate stable IDs
+# --------------------------------------------------
 
 def assign_event_ids(episode):
 
@@ -74,7 +92,7 @@ def assign_event_ids(episode):
 
 
 # --------------------------------------------------
-# 3. Prepare one episode for the LLM
+# 4. Prepare one complete episode for the LLM
 # --------------------------------------------------
 
 def prepare_episode_input(episode):
@@ -117,7 +135,7 @@ def prepare_episode_input(episode):
 
 
 # --------------------------------------------------
-# 4. Load prompt
+# 5. Load prompt
 # --------------------------------------------------
 
 def load_prompt():
@@ -131,7 +149,7 @@ def load_prompt():
 
 
 # --------------------------------------------------
-# 5. Build LLM request
+# 6. Build LLM request
 # --------------------------------------------------
 
 def build_layer1_request(episode):
@@ -140,14 +158,15 @@ def build_layer1_request(episode):
 
     episode_data = prepare_episode_input(episode)
 
+    # Compact JSON reduces unnecessary whitespace.
     user_input = (
         "Analyze the following screenplay episode.\n\n"
         "Return the required JSON output only.\n\n"
         "SCREENPLAY DATA:\n"
         + json.dumps(
             episode_data,
-            indent=2,
-            ensure_ascii=False
+            ensure_ascii=False,
+            separators=(",", ":")
         )
     )
 
@@ -158,7 +177,7 @@ def build_layer1_request(episode):
 
 
 # --------------------------------------------------
-# 6. Load parsed episodes
+# 7. Load parsed episodes
 # --------------------------------------------------
 
 def load_episodes():
@@ -181,16 +200,38 @@ def load_episodes():
     return episodes
 
 
+def find_episode(episodes, episode_number):
+    """Find an episode using its numeric identifier."""
+
+    for episode in episodes:
+
+        current_number = get_episode_number(
+            episode["episode"]
+        )
+
+        if current_number == episode_number:
+            return episode
+
+    raise ValueError(
+        f"Episode {episode_number} was not found "
+        "in parsed screenplay data."
+    )
+
+
 # --------------------------------------------------
-# 7. Validate Layer 1 response
+# 8. Validate Layer 1 response
 # --------------------------------------------------
 
 def validate_layer1_response(result, episode):
 
     if not isinstance(result, dict):
-        raise ValueError("Gemini response must be a JSON object.")
+        raise ValueError(
+            "Groq response must be a JSON object."
+        )
 
-    expected_episode_id = get_episode_id(episode["episode"])
+    expected_episode_id = get_episode_id(
+        episode["episode"]
+    )
 
     received_episode_id = str(
         result.get("episode", "")
@@ -216,7 +257,7 @@ def validate_layer1_response(result, episode):
         for event in scene["events"]
     }
 
-    # Preserve the original event order for chronology checks
+    # Preserve original event order for chronology checks.
     event_order = {
         event["event_id"]: index
         for index, event in enumerate(
@@ -272,10 +313,13 @@ def validate_layer1_response(result, episode):
                 f"Missing fields in selection: {missing}"
             )
 
-        # Check selection ID
+        # Check selection ID.
         selection_id = selection["selection_id"]
 
-        if not isinstance(selection_id, str) or not selection_id:
+        if (
+            not isinstance(selection_id, str)
+            or not selection_id
+        ):
             raise ValueError("Invalid selection_id.")
 
         if selection_id in selection_ids:
@@ -285,13 +329,15 @@ def validate_layer1_response(result, episode):
 
         selection_ids.add(selection_id)
 
-        # Check event IDs
+        # Check event IDs.
         selected_ids = selection["event_ids"]
 
         if (
             not isinstance(selected_ids, list)
             or not selected_ids
-            or not all(isinstance(x, str) for x in selected_ids)
+            or not all(
+                isinstance(x, str) for x in selected_ids
+            )
         ):
             raise ValueError(
                 f"Invalid event_ids in {selection_id}."
@@ -309,7 +355,7 @@ def validate_layer1_response(result, episode):
                 f"Duplicate event IDs in {selection_id}."
             )
 
-        # Check chronological order
+        # Check chronological order.
         positions = [
             event_order[event_id]
             for event_id in selected_ids
@@ -321,13 +367,13 @@ def validate_layer1_response(result, episode):
                 f"in {selection_id}."
             )
 
-        # Check category
+        # Check category.
         if selection["event_category"] not in allowed_categories:
             raise ValueError(
                 f"Invalid event category in {selection_id}."
             )
 
-        # Check importance
+        # Check importance.
         importance = selection["importance"]
 
         if (
@@ -340,7 +386,7 @@ def validate_layer1_response(result, episode):
                 f"in {selection_id}."
             )
 
-        # Check text fields
+        # Check text fields.
         for field in (
             "emotional_tone",
             "description",
@@ -355,7 +401,7 @@ def validate_layer1_response(result, episode):
                     f"Invalid {field} in {selection_id}."
                 )
 
-        # Check hook and ending potential
+        # Check hook and ending potential.
         if selection["hook_potential"] not in allowed_potential:
             raise ValueError(
                 f"Invalid hook_potential in {selection_id}."
@@ -366,7 +412,7 @@ def validate_layer1_response(result, episode):
                 f"Invalid ending_potential in {selection_id}."
             )
 
-        # Check context requirement
+        # Check context requirement.
         if not isinstance(selection["requires_context"], bool):
             raise ValueError(
                 f"requires_context must be boolean "
@@ -377,7 +423,7 @@ def validate_layer1_response(result, episode):
 
 
 # --------------------------------------------------
-# 8. Save JSON output
+# 9. Save JSON output
 # --------------------------------------------------
 
 def save_json(data, output_path):
@@ -398,38 +444,34 @@ def save_json(data, output_path):
 
 
 # --------------------------------------------------
-# 9. Main: Gemini Layer 1 execution
+# 10. Run Layer 1 for a selected episode
 # --------------------------------------------------
 
-def main():
+def run_layer1(episode_number=22):
 
-    # Load screenplay data
-    episodes = load_episodes()
-
-    # Generate stable IDs
-    for episode in episodes:
-        assign_event_ids(episode)
-
-    # Select Episode 22 for initial testing
-    selected_episode = next(
-        (
-            episode for episode in episodes
-            if episode["episode"] == "Episode 22"
-        ),
-        None
+    input_output_path, result_output_path = (
+        get_output_paths(episode_number)
     )
 
-    if selected_episode is None:
-        raise ValueError(
-            "Episode 22 was not found."
-        )
+    # Load screenplay data.
+    episodes = load_episodes()
 
-    # Prepare input
+    # Find the requested episode.
+    selected_episode = find_episode(
+        episodes,
+        episode_number
+    )
+
+    # Generate stable IDs.
+    assign_event_ids(selected_episode)
+
+    # Prepare the complete episode input.
     request = build_layer1_request(selected_episode)
 
+    # Save the exact request for inspection.
     save_json(
         request,
-        INPUT_OUTPUT_PATH
+        input_output_path
     )
 
     total_events = sum(
@@ -437,42 +479,93 @@ def main():
         for scene in selected_episode["scenes"]
     )
 
+    episode_id = get_episode_id(
+        selected_episode["episode"]
+    )
+
+    # Input size information.
+    system_prompt_chars = len(request["system_prompt"])
+    user_input_chars = len(request["user_input"])
+    total_input_chars = (
+        system_prompt_chars + user_input_chars
+    )
+
     print("\n===== LAYER 1 INPUT PREPARATION =====")
     print("Episode:", selected_episode["episode"])
-    print("Episode ID:", selected_episode["episode_id"])
+    print("Episode ID:", episode_id)
     print("Total scenes:", len(selected_episode["scenes"]))
     print("Total events:", total_events)
 
-    # Call Gemini
-    print("\nSending Episode 22 to Gemini...")
+    print("\n===== REQUEST SIZE =====")
+    print("System prompt characters:", system_prompt_chars)
+    print("User input characters:", user_input_chars)
+    print("Total characters:", total_input_chars)
+
+    # Select the configured provider.
+    provider_name, generate_json = get_provider("layer1")
+
+    print(
+        f"\nSending {selected_episode['episode']} "
+        f"to {provider_name.upper()}..."
+    )
 
     result = generate_json(
         system_prompt=request["system_prompt"],
         user_input=request["user_input"]
     )
 
-    # Validate response
+    # Validate response.
     validate_layer1_response(
         result,
         selected_episode
     )
 
-    # Save Gemini results
+    # Save Groq results.
     save_json(
         result,
-        RESULT_OUTPUT_PATH
+        result_output_path
     )
 
-    # Display summary
-    print("\n===== LAYER 1 GEMINI RESULTS =====")
+    print("\n===== LAYER 1 RESULTS =====")
     print("Episode:", result["episode"])
+
     print(
         "Dramatic selections:",
         len(result["dramatic_events"])
     )
+
     print("Validation: Passed")
-    print("Input saved at:", INPUT_OUTPUT_PATH)
-    print("Results saved at:", RESULT_OUTPUT_PATH)
+    print("Input saved at:", input_output_path)
+    print("Results saved at:", result_output_path)
+
+    return result
+
+
+# --------------------------------------------------
+# 11. Command-line execution
+# --------------------------------------------------
+
+def main():
+
+    parser = argparse.ArgumentParser(
+        description="Run Layer 1 dramatic event identification."
+    )
+
+    parser.add_argument(
+        "--episode",
+        type=int,
+        default=22,
+        help="Episode number to analyze (default: 22)."
+    )
+
+    args = parser.parse_args()
+
+    if args.episode < 1:
+        parser.error(
+            "Episode number must be greater than zero."
+        )
+
+    run_layer1(args.episode)
 
 
 if __name__ == "__main__":
