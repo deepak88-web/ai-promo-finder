@@ -3,5 +3,11 @@ __pycache__/
 .env
 *.pyc
 
+# Raw screenplay data
 data/raw/
-outputs/raw/
+
+# Generated intermediate data
+data/interim/
+
+# Generated reports
+outputs/
