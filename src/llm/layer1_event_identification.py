@@ -229,7 +229,7 @@ def validate_layer1_response(result, episode):
 
     if not isinstance(result, dict):
         raise ValueError(
-            "Groq response must be a JSON object."
+            "Model response must be a JSON object."
         )
 
     expected_episode_id = get_episode_id(
@@ -450,14 +450,19 @@ def save_json(data, output_path):
 # 10. Run Layer 1 for a selected episode
 # --------------------------------------------------
 
-def run_layer1(episode_number=22, input_path=INPUT_PATH, reports_dir=REPORT_DIR, raw_dir=RAW_DIR):
+def run_layer1(episode_number=22, input_path=None, reports_dir=None, raw_dir=None,
+               api_key=None, model=None, provider=None, base_url=None, parsed_path=None):
+
+    actual_input = parsed_path or input_path or INPUT_PATH
+    actual_reports = reports_dir or REPORT_DIR
+    actual_raw = raw_dir or RAW_DIR
 
     input_output_path, result_output_path = (
-        get_output_paths(episode_number, reports_dir, raw_dir)
+        get_output_paths(episode_number, actual_reports, actual_raw)
     )
 
     # Load screenplay data.
-    episodes = load_episodes(input_path)
+    episodes = load_episodes(actual_input)
 
     # Find the requested episode.
     selected_episode = find_episode(
@@ -505,7 +510,7 @@ def run_layer1(episode_number=22, input_path=INPUT_PATH, reports_dir=REPORT_DIR,
     print("Total characters:", total_input_chars)
 
     # Select the configured provider.
-    provider_name, generate_json = get_provider("layer1")
+    provider_name, generate_json = get_provider("layer1", provider_override=provider)
 
     print(
         f"\nSending {selected_episode['episode']} "
@@ -514,7 +519,10 @@ def run_layer1(episode_number=22, input_path=INPUT_PATH, reports_dir=REPORT_DIR,
 
     result = generate_json(
         system_prompt=request["system_prompt"],
-        user_input=request["user_input"]
+        user_input=request["user_input"],
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
     )
 
     # Validate response.
@@ -523,7 +531,7 @@ def run_layer1(episode_number=22, input_path=INPUT_PATH, reports_dir=REPORT_DIR,
         selected_episode
     )
 
-    # Save Groq results.
+    # Save Layer 1 results.
     save_json(
         result,
         result_output_path

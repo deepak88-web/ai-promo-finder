@@ -1,0 +1,52 @@
+EPISODE NUMBER: Episode 2
+EPISODE LOGLINE: Maya chases the Syndicate's encrypted courier across the neon streets of Shinjuku before the access codes expire.
+
+--- SCRIPT START ---
+
+SCENE 1
+SCENE START: 00:00.00
+SCENE END: 01:15.00
+EXT. SHINJUKU ALLEYWAY - NIGHT
+
+**ACTION:**
+Start: (00:00.00) | End: (00:06.00)
+Neon reflections shimmer across wet asphalt as a shadowy figure in a leather trenchcoat sprints through the rain.
+
+**MAYA (OVER COMMS, URGENT):**
+Start: (00:06.00) | End: (00:14.00)
+Control, target is heading south towards the subway entrance! He's carrying the master decryption key!
+
+**CONTROL (CALM):**
+Start: (00:14.00) | End: (00:21.00)
+You have forty seconds before the subway gates seal for the night. Cut him off through the arcade!
+
+**ACTION:**
+Start: (00:21.00) | End: (00:27.00)
+Maya vaults over a row of vending machines, landing in front of the courier with weapon raised.
+
+**COURIER (DESPERATE):**
+Start: (00:27.00) | End: (00:35.00)
+You don't understand what's on this drive! If Kabir gets the cipher, the entire national power grid collapses at dawn!
+
+**MAYA (RESOLUTE):**
+Start: (00:35.00) | End: (00:43.00)
+Then hand it over. Because you're not walking out of this alley with it.
+
+SCENE 2
+SCENE START: 01:15.00
+SCENE END: 02:30.00
+INT. SUBWAY STATION PLATFORM - CONTINUOUS
+
+**ACTION:**
+Start: (01:15.00) | End: (01:22.00)
+The courier dives through the closing doors of an express train just as Maya reaches the platform edge.
+
+**MAYA (FRUSTRATED):**
+Start: (01:22.00) | End: (01:30.00)
+He's on the outbound line! Override the train controls immediately!
+
+**CONTROL (ALARMED):**
+Start: (01:30.00) | End: (01:39.00)
+We can't override! Kabir's team just hijacked the central switching station!
+
+--- SCRIPT END ---

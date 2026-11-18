@@ -1,0 +1,60 @@
+EPISODE NUMBER: Episode 1
+EPISODE LOGLINE: When an undercover agent discovers a mole inside the agency, she must decide whom to trust before time runs out.
+
+--- SCRIPT START ---
+
+SCENE 1
+SCENE START: 00:00.00
+SCENE END: 01:20.00
+INT. COMMAND CENTER - NIGHT
+
+**ACTION:**
+Start: (00:00.00) | End: (00:05.00)
+Alarms blare across the dark console screens. Red emergency lights bathe the room in an ominous pulse.
+
+**MAYA (URGENT):**
+Start: (00:05.00) | End: (00:12.00)
+The firewall was breached from inside the building. Someone in this room deleted the asset logs!
+
+**KABIR (DEFENSIVE):**
+Start: (00:12.00) | End: (00:19.00)
+Calm down, Maya. We don't even know if the transmission went through yet.
+
+**MAYA (INTENSE):**
+Start: (00:19.00) | End: (00:27.00)
+It did. Look at the uplink counter—ten million files just transferred to an offshore ghost server!
+
+**ACTION:**
+Start: (00:27.00) | End: (00:33.00)
+Kabir steps slowly backward toward the secure exit door, slipping his hand toward his concealed holster.
+
+**MAYA (SHOCKED):**
+Start: (00:33.00) | End: (00:41.00)
+It was you... You were the contact in Zurich all along!
+
+**KABIR (COLD):**
+Start: (00:41.00) | End: (00:49.00)
+You should have looked the other way, Maya. Now nobody leaves this room alive.
+
+SCENE 2
+SCENE START: 01:20.00
+SCENE END: 02:40.00
+EXT. ROOFTOP HELIPAD - NIGHT
+
+**ACTION:**
+Start: (01:20.00) | End: (01:26.00)
+Rain lashes the helipad as the rotor blades of a black helicopter begin to turn violently against the storm.
+
+**MAYA (BREATHLESS):**
+Start: (01:26.00) | End: (01:34.00)
+Step away from the chopper, Kabir! The perimeter is locked down!
+
+**KABIR (MOCKING):**
+Start: (01:34.00) | End: (01:42.00)
+Locked down by who? Half the tactical team works for my syndicate now.
+
+**MAYA (DEFIANT):**
+Start: (01:42.00) | End: (01:51.00)
+Then you're going down with them!
+
+--- SCRIPT END ---

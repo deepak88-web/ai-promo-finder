@@ -14,11 +14,12 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-INPUT_PATH = PROJECT_ROOT / "outputs" / "raw" / "promo_evaluation.json"
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "final"
-
-OUTPUT_JSON = OUTPUT_DIR / "ranked_promos.json"
-OUTPUT_CSV = OUTPUT_DIR / "ranked_promos.csv"
+DEFAULT_INPUT_PATH = (
+    PROJECT_ROOT / "outputs" / "raw" / "expanded" / "promo_evaluation.json"
+    if (PROJECT_ROOT / "outputs" / "raw" / "expanded" / "promo_evaluation.json").exists()
+    else PROJECT_ROOT / "outputs" / "raw" / "promo_evaluation.json"
+)
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "final"
 
 # Weights sum to 1.0
 WEIGHTS = {
@@ -35,6 +36,19 @@ DECISION_ORDER = {
     "revise": 1,
     "reject": 2,
 }
+
+
+def format_seconds(val: float | None) -> str:
+    """Format seconds into MM:SS.hh string."""
+    if val is None:
+        return "00:00.00"
+    try:
+        val = float(val)
+        m = int(val // 60)
+        s = val % 60
+        return f"{m:02d}:{s:05.2f}"
+    except (TypeError, ValueError):
+        return "00:00.00"
 
 
 def load_json(path: Path) -> dict:
@@ -195,6 +209,28 @@ def rank_promos(evaluation_data: dict) -> dict:
 
         overall_score = evaluation.get("overall_score")
 
+        segments = item.get("segments", [])
+        formatted_segments = []
+        for idx, s in enumerate(segments):
+            formatted_segments.append({
+                "segment_order": s.get("segment_order", idx + 1),
+                "episode": s.get("episode", ""),
+                "start_time": format_seconds(s.get("start_time")),
+                "end_time": format_seconds(s.get("end_time")),
+                "start_seconds": s.get("start_time"),
+                "end_seconds": s.get("end_time"),
+                "duration": s.get("duration"),
+                "event_ids": s.get("event_ids", []),
+            })
+
+        hook = item.get("hook", {})
+        cliffhanger = item.get("cliffhanger", {})
+        warnings = item.get("validation_warnings", [])
+        warning_codes = [
+            w.get("code") if isinstance(w, dict) else str(w)
+            for w in warnings
+        ]
+
         ranked.append({
             "promo_id": promo_id,
             "weighted_score": weighted_score,
@@ -209,6 +245,15 @@ def rank_promos(evaluation_data: dict) -> dict:
             "improvement_suggestion": evaluation.get(
                 "improvement_suggestion", ""
             ),
+            "construction_type": item.get("construction_type", "single_candidate"),
+            "episodes": item.get("episodes", []),
+            "total_duration": item.get("actual_duration") or item.get("total_duration"),
+            "segments": formatted_segments,
+            "raw_segments": segments,
+            "hook": hook,
+            "cliffhanger": cliffhanger,
+            "warnings": warning_codes,
+            "requires_manual_review": item.get("requires_manual_review", False),
             "evaluation": evaluation,
         })
 
@@ -267,16 +312,21 @@ def rank_promos(evaluation_data: dict) -> dict:
     }
 
 
-def save_json(results: dict) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+def save_outputs(results: dict, output_dir: Path | str = DEFAULT_OUTPUT_DIR) -> dict[str, Path]:
+    """Save ranked_promos.json/csv and final_promos.json/csv."""
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    with OUTPUT_JSON.open("w", encoding="utf-8") as file:
+    json_ranked = out_dir / "ranked_promos.json"
+    csv_ranked = out_dir / "ranked_promos.csv"
+    json_final = out_dir / "final_promos.json"
+    csv_final = out_dir / "final_promos.csv"
+
+    # 1. Save ranked_promos.json
+    with json_ranked.open("w", encoding="utf-8") as file:
         json.dump(results, file, indent=2, ensure_ascii=False)
 
-
-def save_csv(results: dict) -> None:
-    """Save a compact, spreadsheet-friendly ranking."""
-
+    # 2. Save ranked_promos.csv
     fields = [
         "global_rank",
         "promo_id",
@@ -292,12 +342,7 @@ def save_csv(results: dict) -> None:
         "pitch",
     ]
 
-    with OUTPUT_CSV.open(
-        "w",
-        newline="",
-        encoding="utf-8-sig",
-    ) as file:
-
+    with csv_ranked.open("w", newline="", encoding="utf-8-sig") as file:
         writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
 
@@ -310,22 +355,111 @@ def save_csv(results: dict) -> None:
                 "decision": promo["decision"],
                 "pitch": promo["pitch"],
             }
-
             row.update(promo["dimension_scores"])
             writer.writerow(row)
 
+    # 3. Save final_promos.json (standardized assignment output)
+    final_list = []
+    for promo in results["ranked_promos"]:
+        final_list.append({
+            "rank": promo["global_rank"],
+            "promo_id": promo["promo_id"],
+            "episodes": promo.get("episodes", []),
+            "total_duration": promo.get("total_duration"),
+            "segments": promo.get("segments", []),
+            "hook": promo.get("hook", {}),
+            "cliffhanger": promo.get("cliffhanger", {}),
+            "one_line_pitch": promo.get("pitch", ""),
+            "overall_score": promo.get("overall_score") or promo.get("weighted_score"),
+            "weighted_score": promo.get("weighted_score"),
+            "decision": promo.get("decision"),
+            "dimension_scores": promo.get("dimension_scores", {}),
+            "ranking_reason": "; ".join(promo.get("strengths", [])),
+            "strengths": promo.get("strengths", []),
+            "weaknesses": promo.get("weaknesses", []),
+            "improvement_suggestion": promo.get("improvement_suggestion", ""),
+            "warnings": promo.get("warnings", []),
+        })
 
-def main() -> None:
+    with json_final.open("w", encoding="utf-8") as file:
+        json.dump(final_list, file, indent=2, ensure_ascii=False)
+
+    # 4. Save final_promos.csv
+    final_fields = [
+        "rank",
+        "promo_id",
+        "episodes",
+        "total_duration",
+        "segment_count",
+        "segments",
+        "hook_summary",
+        "cliffhanger_summary",
+        "one_line_pitch",
+        "overall_score",
+        "decision",
+        "ranking_reason",
+        "warnings",
+    ]
+
+    with csv_final.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.DictWriter(file, fieldnames=final_fields)
+        writer.writeheader()
+
+        for item in final_list:
+            segs_summary = "; ".join(
+                f"[{s.get('episode')}] {s.get('start_time')}-{s.get('end_time')} ({s.get('duration')}s)"
+                for s in item.get("segments", [])
+            )
+            hk = item.get("hook", {})
+            hook_summary = hk.get("evidence_text") or hk.get("type", "")
+            cl = item.get("cliffhanger", {})
+            cliff_summary = cl.get("evidence_text") or cl.get("type", "")
+
+            writer.writerow({
+                "rank": item["rank"],
+                "promo_id": item["promo_id"],
+                "episodes": ", ".join(str(ep) for ep in item.get("episodes", [])),
+                "total_duration": item.get("total_duration"),
+                "segment_count": len(item.get("segments", [])),
+                "segments": segs_summary,
+                "hook_summary": hook_summary,
+                "cliffhanger_summary": cliff_summary,
+                "one_line_pitch": item.get("one_line_pitch", ""),
+                "overall_score": item.get("overall_score"),
+                "decision": item.get("decision"),
+                "ranking_reason": item.get("ranking_reason", ""),
+                "warnings": "; ".join(item.get("warnings", [])),
+            })
+
+    return {
+        "ranked_json": json_ranked,
+        "ranked_csv": csv_ranked,
+        "final_json": json_final,
+        "final_csv": csv_final,
+    }
+
+
+def rank_and_export(
+    input_path: Path | str | None = None,
+    output_dir: Path | str | None = None,
+) -> dict:
+    """Rank evaluated promos and write ranked_promos.* and final_promos.*."""
+    in_path = Path(input_path) if input_path else DEFAULT_INPUT_PATH
+    out_dir = Path(output_dir) if output_dir else DEFAULT_OUTPUT_DIR
+
+    evaluation_data = load_json(in_path)
+    results = rank_promos(evaluation_data)
+    saved_paths = save_outputs(results, out_dir)
+    results["saved_paths"] = saved_paths
+    return results
+
+
+def main(input_path=None, output_dir=None) -> None:
     print("\n========== GLOBAL PROMO RANKER ==========")
 
-    evaluation_data = load_json(INPUT_PATH)
-
-    results = rank_promos(evaluation_data)
-
-    save_json(results)
-    save_csv(results)
-
+    results = rank_and_export(input_path=input_path, output_dir=output_dir)
     stats = results["statistics"]
+    saved_paths = results.get("saved_paths", {})
 
     print("\n========== RANKING SUMMARY ==========")
     print(f"Total promos ranked: {stats['total_ranked']}")
@@ -344,8 +478,8 @@ def main() -> None:
         )
 
     print("\nFiles saved:")
-    print(f"JSON: {OUTPUT_JSON}")
-    print(f"CSV:  {OUTPUT_CSV}")
+    for name, p in saved_paths.items():
+        print(f"{name}: {p}")
 
     print("\nRanking completed successfully.")
 

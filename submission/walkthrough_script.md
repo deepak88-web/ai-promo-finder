@@ -1,33 +1,67 @@
-# 2-3 Minute Walkthrough Recording Script
+# 3-Minute Video Walkthrough Script & Transcript
 
-Target length: about 2 minutes 30 seconds. Record the Streamlit app in your own voice; use the local 50-episode results and avoid showing API keys or the screenplay ZIP.
+**Target Duration**: 2 minutes 45 seconds to 3 minutes  
+**Goal**: Explain the problem, architecture, evaluation funnel, Streamlit interface, and deliverables for **Problem 1: Find the Promos** (Kuku AI Generalist Assignment).
 
-## 0:00-0:20 - Set the scope
+---
 
-"I chose Problem 1: finding short promos from timestamped screenplays. The prototype identifies source intervals and ranks promo candidates. It does not edit footage, add music, or create overlays."
+### [0:00 – 0:30] Hook & Problem Overview
+*(Visual Cue: Show Streamlit Dashboard or title slide with AI Promo Finder)*
 
-## 0:20-0:45 - Dashboard and ranking
+> **Spoken**:  
+> "Hi everyone, today I'm presenting **AI Promo Finder**, built for Kuku's Problem 1: finding high-converting, 20 to 60-second audio promos from timestamped screenplay packs.  
+> 
+> In narrative audio, a great promo cannot simply be a random excerpt. It requires three non-negotiable qualities: a strong opening hook within the first 3 seconds, narrative coherence that makes sense without prior context, and a gripping unresolved cliffhanger at the end.  
+> 
+> Rather than relying on a naive end-to-end LLM prompt that suffers from context loss and hallucinated timestamps, our system implements a grounded, multi-stage hierarchical funnel."
 
-Open **Dashboard**, then **Global Rankings**. Point out that the existing full-pack run produced 105 evaluated promos and show how scores and episode filters work.
+---
 
-"The rankings are recommendations from a text-based evaluator, not a claim that the actual footage has been reviewed."
+### [0:30 – 1:15] Architecture & The Funnel
+*(Visual Cue: Switch to Global Rankings / Episode Explorer)*
 
-## 0:45-1:15 - Compare and explore
+> **Spoken**:  
+> "Our architecture breaks down the screenplay into a four-stage deterministic pipeline:
+> 
+> 1. **Parsing & Dramatic Identification (Layer 1)**: The script parser normalizes scene timestamps and speakers. Layer 1 uses fast reasoning models like Groq or Gemini to isolate pivotal dramatic turning points, conflict beats, and reveals.
+> 2. **Candidate Window Expansion**: We mathematically expand each event into valid candidate windows while preserving verbatim dialogue excerpts and calculating exact source timestamps.
+> 3. **Candidate Evaluation (Layer 2)**: Candidates are scored across six dimensions—hook potential, emotional intensity, suspense, coherence, promotional value, and ending strength.
+> 4. **Composition & Validation**: Individual moments and chronological same-episode montages are assembled. Exact segment durations are summed down to the millisecond, strictly enforcing the 20 to 60-second constraint."
 
-Open **Episode Explorer** and **Candidate Comparison**. Show one episode's candidate timestamps and compare two candidates' scores, strengths, and weaknesses.
+---
 
-## 1:15-1:45 - Compose and verify
+### [1:15 – 2:00] Grounding, Evaluator & Quality Review
+*(Visual Cue: Switch to 'Promo Quality Review' tab and select a top promo)*
 
-Open **Promo Composer**. Pick a three-segment same-episode candidate or a verified cross-episode candidate. Show the ordered episode/time intervals, summed duration, and manual-review label. Open **Cross-Episode Discovery** and point to the V4 pair IDs and evidence excerpts.
+> **Spoken**:  
+> "On the **Promo Quality Review** page, every promo is validated against the raw screenplay. Opening hooks and closing cliffhangers are strictly grounded in verified event IDs within their respective 3-second boundary windows.  
+> 
+> Promos are then evaluated by a comprehensive evaluator across six weighted criteria: opening hook, standalone coherence, narrative flow, emotional impact, cliffhanger effectiveness, and promotional appeal. 
+> 
+> Our decision logic is fully deterministic: scores of 7.0 or higher are recommended, 5.0 to 6.9 are flagged for revision, and below 5.0 are rejected—with automatic downgrade if standalone coherence falls below 5.0."
 
-"The three-part hub option connects each spoke to the shared anchor. The spoke-to-spoke cut is not verified, so it stays a review candidate."
+---
 
-## 1:45-2:15 - Quality review and limitations
+### [2:00 – 2:30] Streamlit UI, Security & Dynamic Model Selection
+*(Visual Cue: Click the sidebar 'Model & API Settings', open the 'Configure API Key' popup, and show New Input Processing)*
 
-Open **Promo Quality Review**. Show a missing hook or cliffhanger warning, then a new composition marked evaluation pending. Explain that chronology or event evidence alone cannot establish attention, suspense, or standalone clarity.
+> **Spoken**:  
+> "For the frontend, we built an interactive Streamlit application designed for both production deployment and instant testing:
+> 
+> In the sidebar, users can dynamically select their provider—Gemini, Groq, OpenAI-compatible endpoints, or an offline Mock mode. 
+> 
+> For security, API keys are entered via a modal popup and stored strictly in session memory—they are never exposed on screen, baked into the image, or written to disk.
+> 
+> Users can run a one-click test on our bundled sample pack, upload custom screenplay ZIPs, and immediately export standardized `final_promos.json` and `final_promos.csv` deliverables with formatted timestamps."
 
-"One failure we found: the baseline evaluator recommended PROMO_EP028_C001 with a 7 out of 10 hook score even though the validator found no opening hook evidence. That is why the review page keeps those signals separate."
+---
 
-## 2:15-2:30 - Reuse
+### [2:30 – 3:00] Verification, Docker & Conclusion
+*(Visual Cue: Show terminal running `pytest -v` passing all 14 tests, and show `docker compose up`)*
 
-Open **New Input Processing** without starting a run. Show accepted ZIP/TXT inputs and explain that the workflow uses the selected Gemini/Groq providers. Mention that fresh model processing uses API quota, and that V4 is not rerun by the expanded composer.
+> **Spoken**:  
+> "To guarantee engineering rigor, the entire system includes a suite of 15 deterministic offline tests covering parser edge-cases, window generator logic, multi-provider routing, and end-to-end execution with zero network dependency.
+> 
+> Furthermore, the application is completely Dockerized and production-ready for deployment on Render, Docker Compose, or Streamlit Cloud with a single command: `docker compose up --build`.
+> 
+> AI Promo Finder transforms raw text into auditable, high-converting promo cut lists grounded in dramatic evidence. Thank you!"

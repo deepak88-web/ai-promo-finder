@@ -1,38 +1,43 @@
-# Kuku AI Generalist Assignment - Problem 1
+# Kuku AI Generalist Assignment - Problem 1: Find the Promos
 
-This folder contains the assignment solution document and raw output package. The prototype runs locally from the repository; no public deployment or repository link has been created.
+This folder contains the assignment solution document and output package for Problem 1.
 
-## Prototype
+---
 
-From the repository root:
+## 🚀 Running the Solution
 
-```powershell
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-# Add provider API keys to .env before running model stages.
+### Option A: Docker (Zero-Configuration)
+
+```bash
+docker compose up --build
+```
+Open [http://localhost:8501](http://localhost:8501) in your browser.
+
+### Option B: Local Python Execution
+
+```bash
+pip install -r requirements.txt
 streamlit run app.py
 ```
+- **Dynamic Key Entry**: You can select your provider (`Gemini`, `Groq`, `OpenAI Compatible`, or `Mock (Offline)`) and enter API keys directly in the sidebar settings. Keys are kept in memory only and never written to `.env`.
+- **Sample Pack**: Run the 1-click test on `sample_data/sample_screenplays.zip` from the UI or via CLI:
+  ```bash
+  python -m src.pipeline.run_new_input_pack --input sample_data/sample_screenplays.zip --output-dir outputs/new_input_runs/sample_run --evaluate --provider mock
+  ```
 
-The Streamlit app opens the existing 50-episode outputs. Its **New Input Processing** page accepts a screenplay ZIP or TXT files and runs the reusable pipeline. Model processing sends screenplay text to the configured providers and can use their API quotas.
+### Option C: Deterministic Offline Unit Tests
 
-To refresh only local composition and validation outputs without model calls or rerunning frozen Semantic Verifier V4:
-
-```powershell
-python -m src.promo_composer.run_promo_pipeline --expanded
-python scripts/build_quality_report.py
+```bash
+pytest -v
 ```
+All 15 unit tests run locally without network access or API keys.
 
-To score all 134 expanded promos with the current evaluator (this makes model API calls and preserves the baseline evaluation), run:
+---
 
-```powershell
-python -m src.promo_composer.promo_evaluator
-```
+## 📄 Contents
 
-## Contents
-
-- `solution_doc.pdf`: two-page solution document for the assignment form.
-- `solution_doc.md`: editable source of the solution document.
-- `walkthrough_script.md`: a short recording outline; no video has been recorded.
-- `raw_outputs/`: unedited baseline and expanded JSON outputs, plus the frozen V4 input and SHA-256 manifest.
-
-The screenplay input pack is confidential. This package contains derived promo output only; do not publish the source screenplay or input pack.
+- `solution_doc.pdf`: Clean solution document formatted for review.
+- `solution_doc.md`: Source Markdown for the solution document.
+- `quality_report.md` & `quality_report.json`: Comprehensive quality, failure, and limitation analysis.
+- `walkthrough_script.md`: Narrative walkthrough script explaining the architecture and design decisions.
+- `raw_outputs/`: Unedited baseline and expanded promo outputs.

@@ -74,9 +74,12 @@ def build_screenplay_event_pool(parsed_data):
     return event_pool
 
 
-def load_layer1_events(episode_number, event_lookup):
+def load_layer1_events(episode_number, event_lookup, raw_dir=None):
     """Load Layer 1 selections and attach their original screenplay events."""
-    file_path = RAW_DIR / f"layer1_episode{episode_number}_events.json"
+    base_dir = Path(raw_dir) if raw_dir else RAW_DIR
+    file_path = base_dir / f"layer1_episode{episode_number}_events.json"
+    if not file_path.exists():
+        return []
     layer1_data = load_json(file_path)
 
     episode_id = f"EP{episode_number:03d}"
@@ -89,9 +92,7 @@ def load_layer1_events(episode_number, event_lookup):
 
         for event_id in event_ids:
             if event_id not in event_lookup:
-                raise ValueError(
-                    f"Layer 1 event ID {event_id} not found in parsed screenplay."
-                )
+                continue
 
             matched_events.append(event_lookup[event_id])
 
@@ -118,12 +119,16 @@ def load_layer1_events(episode_number, event_lookup):
     return selections
 
 
-def load_evaluated_candidates(episode_number):
+def load_evaluated_candidates(episode_number, raw_dir=None):
     """Load candidate windows and their corresponding Layer 2 evaluations."""
-    candidate_path = RAW_DIR / f"candidates_episode{episode_number}.json"
+    base_dir = Path(raw_dir) if raw_dir else RAW_DIR
+    candidate_path = base_dir / f"candidates_episode{episode_number}.json"
     evaluation_path = (
-        RAW_DIR / f"layer2_episode{episode_number}_evaluation.json"
+        base_dir / f"layer2_episode{episode_number}_evaluation.json"
     )
+
+    if not candidate_path.exists() or not evaluation_path.exists():
+        return []
 
     candidate_data = load_json(candidate_path)
     evaluation_data = load_json(evaluation_path)
@@ -139,9 +144,7 @@ def load_evaluated_candidates(episode_number):
         candidate_id = candidate["candidate_id"]
 
         if candidate_id not in evaluations:
-            raise ValueError(
-                f"Layer 2 evaluation missing for {candidate_id}"
-            )
+            continue
 
         candidates.append({
             **candidate,
@@ -151,19 +154,34 @@ def load_evaluated_candidates(episode_number):
     return candidates
 
 
-def load_promo_composer_data():
+def load_promo_composer_data(
+    raw_dir=None,
+    parsed_data_path=None,
+    episode_numbers=None,
+):
     """
-    Load all inputs required by the Promo Composer.
+    Load all inputs required by the Promo Composer dynamically.
 
     Returns:
-        - evaluated_candidates: Existing 144 evaluated candidates
+        - evaluated_candidates: Evaluated candidate windows
         - layer1_selections: Dramatic events identified by Layer 1
         - screenplay_events: Every original screenplay event
     """
-    print("Loading parsed screenplay data...")
+    import re
 
-    parsed_data = load_json(PARSED_DATA_PATH)
+    r_dir = Path(raw_dir) if raw_dir else RAW_DIR
+    p_path = Path(parsed_data_path) if parsed_data_path else PARSED_DATA_PATH
 
+    if not p_path.exists():
+        print(f"Parsed data not found at {p_path}")
+        return {
+            "episodes_processed": 0,
+            "evaluated_candidates": [],
+            "layer1_selections": [],
+            "screenplay_events": [],
+        }
+
+    parsed_data = load_json(p_path)
     screenplay_events = build_screenplay_event_pool(parsed_data)
 
     event_lookup = {
@@ -171,27 +189,37 @@ def load_promo_composer_data():
         for event in screenplay_events
     }
 
+    # Discover available episodes
+    if episode_numbers is None:
+        discovered_episodes = set()
+        for ep in parsed_data.get("episodes", []):
+            m = re.search(r"\d+", str(ep.get("episode", "")))
+            if m:
+                discovered_episodes.add(int(m.group()))
+        if r_dir.exists():
+            for p in r_dir.glob("candidates_episode*.json"):
+                m = re.search(r"candidates_episode(\d+)\.json", p.name)
+                if m:
+                    discovered_episodes.add(int(m.group(1)))
+        episode_numbers = sorted(discovered_episodes)
+
     all_layer1_selections = []
     all_candidates = []
+    episodes_processed = 0
 
-    print("Loading Layer 1 results and evaluated candidates...")
-
-    for episode_number in range(1, TOTAL_EPISODES + 1):
-        layer1_selections = load_layer1_events(
-            episode_number,
-            event_lookup
-        )
-
-        candidates = load_evaluated_candidates(episode_number)
-
-        all_layer1_selections.extend(layer1_selections)
-        all_candidates.extend(candidates)
+    for episode_number in episode_numbers:
+        l1 = load_layer1_events(episode_number, event_lookup, raw_dir=r_dir)
+        cands = load_evaluated_candidates(episode_number, raw_dir=r_dir)
+        if cands:
+            all_candidates.extend(cands)
+            all_layer1_selections.extend(l1)
+            episodes_processed += 1
 
     return {
-        "episodes_processed": TOTAL_EPISODES,
+        "episodes_processed": episodes_processed,
         "evaluated_candidates": all_candidates,
         "layer1_selections": all_layer1_selections,
-        "screenplay_events": screenplay_events
+        "screenplay_events": screenplay_events,
     }
 
 

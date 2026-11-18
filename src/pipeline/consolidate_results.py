@@ -30,21 +30,35 @@ def join_list(value):
     return value
 
 
-def consolidate_results():
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+def consolidate_results(raw_dir=None, report_dir=None):
+    import re
+
+    r_dir = Path(raw_dir) if raw_dir else RAW_DIR
+    rep_dir = Path(report_dir) if report_dir else REPORT_DIR
+    rep_dir.mkdir(parents=True, exist_ok=True)
 
     master_records = []
     episode_records = []
     warnings = []
 
-    for episode_number in range(1, 51):
+    # Discover available episodes dynamically
+    discovered_episodes = set()
+    if r_dir.exists():
+        for p in r_dir.glob("candidates_episode*.json"):
+            m = re.search(r"candidates_episode(\d+)\.json", p.name)
+            if m:
+                discovered_episodes.add(int(m.group(1)))
+
+    episode_numbers = sorted(discovered_episodes) if discovered_episodes else list(range(1, 51))
+
+    for episode_number in episode_numbers:
         episode_id = f"EP{episode_number:03d}"
 
         candidate_path = (
-            RAW_DIR / f"candidates_episode{episode_number}.json"
+            r_dir / f"candidates_episode{episode_number}.json"
         )
         evaluation_path = (
-            RAW_DIR / f"layer2_episode{episode_number}_evaluation.json"
+            r_dir / f"layer2_episode{episode_number}_evaluation.json"
         )
 
         if not candidate_path.exists():
@@ -161,9 +175,9 @@ def consolidate_results():
     # Episode-wise summary
     episode_df = pd.DataFrame(episode_records)
 
-    master_path = REPORT_DIR / "master_candidate_results.csv"
-    ranking_path = REPORT_DIR / "global_ranking.csv"
-    summary_path = REPORT_DIR / "episode_summary.csv"
+    master_path = rep_dir / "master_candidate_results.csv"
+    ranking_path = rep_dir / "global_ranking.csv"
+    summary_path = rep_dir / "episode_summary.csv"
 
     master_df.to_csv(master_path, index=False)
     ranked_df.to_csv(ranking_path, index=False)
@@ -192,6 +206,12 @@ def consolidate_results():
             print("-", warning)
     else:
         print("\nNo missing-file or JSON-read warnings.")
+
+    return {
+        "master_report": master_path,
+        "ranking_report": ranking_path,
+        "summary_report": summary_path,
+    }
 
 
 if __name__ == "__main__":

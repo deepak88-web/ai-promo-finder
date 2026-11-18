@@ -53,12 +53,32 @@ def load_prompt():
 
 
 def build_candidate_input(candidate_data):
-    """Prepare candidate information for evaluation."""
+    """Prepare candidate information for evaluation, including actual screenplay dialogue."""
+    raw_candidates = candidate_data.get("candidates") if isinstance(candidate_data, dict) and "candidates" in candidate_data else [candidate_data]
+    prepared = []
+    for c in raw_candidates:
+        dialogue = c.get("dialogue_excerpt")
+        if not dialogue and c.get("source_events"):
+            dialogue = "\n".join(
+                f"[{e.get('start_timestamp') or e.get('start_time', '')}] {e.get('speaker') or e.get('type')}: {e.get('text', '')}"
+                for e in c.get("source_events", [])
+            )
+        prepared.append({
+            "candidate_id": c.get("candidate_id"),
+            "scene_number": c.get("scene_number"),
+            "start_time": c.get("start_time"),
+            "end_time": c.get("end_time"),
+            "duration": c.get("duration"),
+            "event_categories": c.get("event_categories", []),
+            "descriptions": c.get("descriptions", []),
+            "importance": c.get("importance"),
+            "dialogue_and_action_excerpt": dialogue or "No verbatim dialogue excerpt available.",
+        })
 
     return {
-        "episode": candidate_data["episode"],
-        "duration_constraints": candidate_data["duration_constraints"],
-        "candidates": candidate_data["candidates"]
+        "episode": candidate_data.get("episode", candidate_data.get("candidate_id", "EP001")[:5]),
+        "duration_constraints": candidate_data.get("duration_constraints", {}),
+        "candidates": prepared
     }
 
 
@@ -111,7 +131,7 @@ def validate_evaluation(result, candidate_data):
 
     if set(returned_ids) != expected_ids:
         raise ValueError(
-            "Groq must evaluate every candidate exactly once."
+            "Evaluation model must evaluate every candidate exactly once."
         )
 
     for item in evaluations:
@@ -178,16 +198,19 @@ def validate_evaluation(result, candidate_data):
     return result
 
 
-def run_layer2_evaluation(episode_number=22, output_dir=OUTPUT_DIR):
+def run_layer2_evaluation(episode_number=22, output_dir=None, raw_dir=None,
+                           api_key=None, model=None, provider=None, base_url=None):
     """Run Layer 2 evaluation for the requested episode."""
 
+    actual_output = Path(raw_dir or output_dir or OUTPUT_DIR)
+
     candidates_path = (
-        Path(output_dir)
+        actual_output
         / f"candidates_episode{episode_number}.json"
     )
 
     output_path = (
-        Path(output_dir)
+        actual_output
         / f"layer2_episode{episode_number}_evaluation.json"
     )
 
@@ -221,34 +244,17 @@ def run_layer2_evaluation(episode_number=22, output_dir=OUTPUT_DIR):
         f"{len(candidate_data['candidates'])}"
     )
 
-    provider_name, generate_json = get_provider("layer2")
+    provider_name, generate_json = get_provider("layer2", provider_override=provider)
 
     print(f"\nSending candidates to {provider_name.upper()}...")
 
     result = generate_json(
         system_prompt,
-        user_input
+        user_input,
+        api_key=api_key,
+        model=model,
+        base_url=base_url,
     )
-
-    print("\n===== DEBUG: GROQ RESPONSE =====")
-    print("Response type:", type(result).__name__)
-
-    if isinstance(result, dict):
-        evaluations = result.get("evaluated_candidates")
-
-        print(
-            "Evaluated candidates type:",
-            type(evaluations).__name__
-        )
-
-        if isinstance(evaluations, list):
-            for index, item in enumerate(evaluations):
-                print(
-                    f"Item {index + 1} type:",
-                    type(item).__name__
-                )
-
-    print("===== END DEBUG =====\n")
 
     validated_result = validate_evaluation(
         result,
@@ -302,9 +308,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.episode < 1 or args.episode > 50:
+    if args.episode < 1:
         parser.error(
-            "Episode number must be between 1 and 50."
+            "Episode number must be at least 1."
         )
 
     run_layer2_evaluation(args.episode)

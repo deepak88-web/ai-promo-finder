@@ -140,7 +140,7 @@ def calculate_candidate_priority(scores):
 # 2. BUILD INDIVIDUAL CANDIDATE SEGMENTS
 # ============================================================
 
-def build_candidate_segment(candidate, event_lookup):
+def build_candidate_segment(candidate, event_lookup, min_candidate_score=None):
     """
     Convert an existing Layer 2 candidate into a standardized
     promotional segment.
@@ -165,7 +165,7 @@ def build_candidate_segment(candidate, event_lookup):
 
     scores = extract_candidate_scores(candidate)
 
-    if scores["weighted_score"] < MIN_CANDIDATE_SCORE:
+    if min_candidate_score is not None and scores["weighted_score"] < min_candidate_score:
         return None
 
     event_ids = candidate.get("event_ids", [])
@@ -233,16 +233,11 @@ def select_candidate_segments(
     for candidate in evaluated_candidates:
         segment = build_candidate_segment(
             candidate,
-            event_lookup
+            event_lookup,
+            min_candidate_score=min_candidate_score,
         )
 
         if not segment:
-            continue
-
-        if (
-            segment["scores"]["weighted_score"]
-            < min_candidate_score
-        ):
             continue
 
         selected.append(segment)
@@ -356,31 +351,33 @@ def select_same_episode_combinations(
             for index, segment in enumerate(group):
                 events = sorted(
                     segment.get("source_events", []),
-                    key=lambda event: float(event.get("start_time", 0)),
+                    key=lambda event: safe_float(event.get("start_time"), 0.0),
                 )
                 if not events:
                     cropped = []
                     break
                 anchor = events[0] if index == 0 else events[-1] if index == 2 else events[len(events) // 2]
-                anchor_start = float(anchor.get("start_time", segment["start_time"]))
-                anchor_end = float(anchor.get("end_time", segment["end_time"]))
+                anchor_start = safe_float(anchor.get("start_time"), safe_float(segment["start_time"], 0.0))
+                anchor_end = safe_float(anchor.get("end_time"), safe_float(segment["end_time"], 0.0))
+                seg_start = safe_float(segment["start_time"], 0.0)
+                seg_end = safe_float(segment["end_time"], 0.0)
                 if index == 0:
-                    start = max(float(segment["start_time"]), anchor_start)
-                    end = min(float(segment["end_time"]), start + 10.0)
+                    start = max(seg_start, anchor_start)
+                    end = min(seg_end, start + 10.0)
                 elif index == 2:
-                    end = min(float(segment["end_time"]), anchor_end)
-                    start = max(float(segment["start_time"]), end - 10.0)
+                    end = min(seg_end, anchor_end)
+                    start = max(seg_start, end - 10.0)
                 else:
                     midpoint = (anchor_start + anchor_end) / 2
-                    start = max(float(segment["start_time"]), midpoint - 5.0)
-                    end = min(float(segment["end_time"]), start + 10.0)
+                    start = max(seg_start, midpoint - 5.0)
+                    end = min(seg_end, start + 10.0)
                 if end <= start:
                     cropped = []
                     break
                 kept_events = [
                     event for event in events
-                    if float(event.get("end_time", -1)) > start
-                    and float(event.get("start_time", 1e12)) < end
+                    if safe_float(event.get("end_time"), -1.0) > start
+                    and safe_float(event.get("start_time"), 1e12) < end
                 ]
                 if not kept_events:
                     cropped = []

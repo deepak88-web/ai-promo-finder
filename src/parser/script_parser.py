@@ -11,24 +11,41 @@ from pathlib import Path
 # --------------------------------------------------
 
 def to_seconds(timestamp):
-    minutes, rest = timestamp.split(":")
-    seconds, hundredths = rest.split(".")
-
-    return (
-        int(minutes) * 60
-        + int(seconds)
-        + int(hundredths) / 100
-    )
+    timestamp = str(timestamp).strip()
+    parts = timestamp.split(":")
+    if len(parts) == 3:
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        if "." in parts[2]:
+            secs, sub = parts[2].split(".")
+            seconds = int(secs) + float(f"0.{sub}")
+        else:
+            seconds = float(parts[2])
+        return round(hours * 3600 + minutes * 60 + seconds, 3)
+    elif len(parts) == 2:
+        minutes = int(parts[0])
+        if "." in parts[1]:
+            secs, sub = parts[1].split(".")
+            seconds = int(secs) + float(f"0.{sub}")
+        else:
+            seconds = float(parts[1])
+        return round(minutes * 60 + seconds, 3)
+    try:
+        return round(float(timestamp), 3)
+    except ValueError:
+        return 0.0
 
 
 # --------------------------------------------------
 # 2. Event pattern
 # --------------------------------------------------
 
+TIMESTAMP_REGEX = r"(?:\d{1,2}:)?\d{2}:\d{2}(?:\.\d{1,3})?"
+
 EVENT_PATTERN = re.compile(
     r"^\*\*(?P<header>[^*\n]+):\*\*\s*\n"
-    r"\s*Start:\s*\((?P<start>\d{2}:\d{2}\.\d{2})\)"
-    r"\s*\|\s*End:\s*\((?P<end>\d{2}:\d{2}\.\d{2})\)\s*\n"
+    r"\s*Start:\s*\((?P<start>" + TIMESTAMP_REGEX + r")\)"
+    r"\s*\|\s*End:\s*\((?P<end>" + TIMESTAMP_REGEX + r")\)\s*\n"
     r"(?P<body>.*?)"
     r"(?=^\*\*[^*\n]+:\*\*\s*$"
     r"|^SCENE\s+\d+\b"
@@ -179,13 +196,13 @@ def parse_scene(scene_text, episode_number):
     )
 
     start_match = re.search(
-        r"^SCENE START:\s*(\d{2}:\d{2}\.\d{2})",
+        r"^SCENE START:\s*(" + TIMESTAMP_REGEX + r")",
         scene_text,
         re.MULTILINE | re.IGNORECASE
     )
 
     end_match = re.search(
-        r"^SCENE END:\s*(\d{2}:\d{2}\.\d{2})",
+        r"^SCENE END:\s*(" + TIMESTAMP_REGEX + r")",
         scene_text,
         re.MULTILINE | re.IGNORECASE
     )
@@ -205,6 +222,12 @@ def parse_scene(scene_text, episode_number):
         episode_number,
         scene_number
     )
+
+    # Fallback to event timestamps if scene boundaries are omitted
+    if scene_start is None and events:
+        scene_start = min(e["start_time"] for e in events)
+    if scene_end is None and events:
+        scene_end = max(e["end_time"] for e in events)
 
     return {
         "scene_number": scene_number,
@@ -255,10 +278,21 @@ def parse_episode(filename, content):
         re.DOTALL | re.IGNORECASE
     )
 
-    if not script_match:
-        return None
-
-    script = script_match.group(1)
+    if script_match:
+        script = script_match.group(1)
+    else:
+        # Fallback: if SCRIPT START delimiter is omitted, extract from the first SCENE marker
+        scene_start_idx = content.find("SCENE 1")
+        if scene_start_idx == -1:
+            m = re.search(r"SCENE\s+\d+", content, re.IGNORECASE)
+            scene_start_idx = m.start() if m else -1
+        if scene_start_idx != -1:
+            script = content[scene_start_idx:]
+            end_match = re.search(r"---\s*SCRIPT END\s*---", script, re.IGNORECASE)
+            if end_match:
+                script = script[:end_match.start()]
+        else:
+            return None
 
     # Split screenplay into individual scenes
     scene_sections = re.split(
@@ -397,6 +431,19 @@ def parse_input_pack(input_path):
 
     if not parsed_episodes:
         raise ValueError(f"No parseable screenplay episodes found in {input_path}")
+
+    # Deduplicate episode identifiers to prevent overwriting
+    seen_episodes = {}
+    for ep in parsed_episodes:
+        ep_id = str(ep["episode"]).strip()
+        if ep_id in seen_episodes:
+            seen_episodes[ep_id] += 1
+            disambiguated = f"{ep_id}_{seen_episodes[ep_id]}"
+            print(f"Warning: Duplicate episode identifier '{ep_id}' in {ep.get('filename')}. Disambiguating to '{disambiguated}'.")
+            ep["episode"] = disambiguated
+        else:
+            seen_episodes[ep_id] = 1
+
     return parsed_episodes
 
 

@@ -40,7 +40,7 @@ load_dotenv()
 
 DEFAULT_MODEL = os.getenv(
     "PROMO_EVALUATION_MODEL",
-    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
 )
 DEFAULT_PROVIDER = os.getenv("PROMO_EVALUATION_PROVIDER", "gemini").strip().lower()
 
@@ -239,9 +239,11 @@ def calculate_evaluation_fingerprint(
     prompt: str,
     provider: str,
     model: str,
+    weights: dict[str, float] | None = None,
 ) -> str:
-    """Fingerprint the prompt and provider configuration used for scoring."""
-    return calculate_prompt_hash(f"{prompt}\nprovider={provider}\nmodel={model}")
+    """Fingerprint the prompt, provider, model, and scoring weights."""
+    weights_json = json.dumps(weights or SCORE_WEIGHTS, sort_keys=True)
+    return calculate_prompt_hash(f"{prompt}\nprovider={provider}\nmodel={model}\nweights={weights_json}")
 
 
 # ============================================================
@@ -463,10 +465,27 @@ def validate_evaluation_response(
                 f"Invalid decision for {promo_id}"
             )
 
-        # Do not trust Gemini's arithmetic.
-        # Calculate the overall score using fixed weights.
-        item["overall_score"] = calculate_overall_score(item)
+        # Do not trust LLM arithmetic.
+        # Calculate overall score using fixed weights.
+        calculated_score = calculate_overall_score(item)
+        item["overall_score"] = calculated_score
 
+        # Code-enforced decision rule:
+        if calculated_score >= 7.0:
+            decision = "recommend"
+        elif calculated_score >= 5.0:
+            decision = "revise"
+        else:
+            decision = "reject"
+
+        # Check for critical flaws that require revision despite high overall score
+        if decision == "recommend":
+            if item.get("standalone_coherence", 10.0) < 5.0:
+                decision = "revise"
+                if "Low standalone coherence requires contextual revision" not in item.get("weaknesses", []):
+                    item["weaknesses"].append("Low standalone coherence requires contextual revision")
+
+        item["decision"] = decision
         validated[promo_id] = item
 
     missing = expected_ids - set(validated)
@@ -491,6 +510,8 @@ def evaluate_promo_batch(
     model: str = DEFAULT_MODEL,
     max_retries: int = DEFAULT_MAX_RETRIES,
     provider: str = DEFAULT_PROVIDER,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Evaluate one batch through Gemini's schema API or the provider router."""
 
@@ -510,7 +531,8 @@ def evaluate_promo_batch(
 
         try:
             if provider == "gemini":
-                response = client.models.generate_content(
+                active_client = client or genai.Client(api_key=api_key)
+                response = active_client.models.generate_content(
                     model=model,
                     contents=prompt,
                     config={
@@ -522,7 +544,7 @@ def evaluate_promo_batch(
                 response_text = getattr(response, "text", None)
             else:
                 from src.llm.provider_router import get_provider
-                _, generate_json = get_provider("promo_evaluation")
+                _, generate_json = get_provider("promo_evaluation", provider_override=provider)
                 payload = {
                     "promos": batch,
                     "required_schema": RESPONSE_SCHEMA,
@@ -533,6 +555,9 @@ def evaluate_promo_batch(
                 result = generate_json(
                     system_prompt,
                     json.dumps(payload, ensure_ascii=False, indent=2),
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
                 )
                 response_text = json.dumps(result, ensure_ascii=False)
 
@@ -547,9 +572,12 @@ def evaluate_promo_batch(
         except Exception as exc:
 
             last_error = exc
+            err_msg = str(exc).lower()
+            if "invalid api key" in err_msg or "unauthorized" in err_msg or "401" in err_msg or "authentication" in err_msg:
+                raise RuntimeError(f"Authentication failed for {provider}: {exc}") from exc
 
             print(
-                f"Gemini evaluation attempt "
+                f"{provider.title()} evaluation attempt "
                 f"{attempt + 1}/{max_retries} failed: {exc}"
             )
 
@@ -572,8 +600,11 @@ def evaluate_promos(
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_retries: int = DEFAULT_MAX_RETRIES,
     provider: str | None = None,
+    base_url: str | None = None,
+    cached_evaluations_path: Path | str | None = None,
+    reuse_cache: bool = True,
 ) -> dict[str, Any]:
-    """Evaluate structurally valid promos."""
+    """Evaluate structurally valid promos with optional cache reuse."""
 
     if batch_size < 1:
         raise ValueError(
@@ -581,21 +612,28 @@ def evaluate_promos(
         )
 
     resolved_provider = (provider or DEFAULT_PROVIDER).strip().lower()
-    if resolved_provider not in {"gemini", "groq"}:
-        raise ValueError("PROMO_EVALUATION_PROVIDER must be 'gemini' or 'groq'.")
-    api_env_name = "GEMINI_API_KEY" if resolved_provider == "gemini" else "GROQ_API_KEY"
-    resolved_api_key = api_key or os.getenv(api_env_name)
+    allowed_providers = {"gemini", "groq", "openai", "openai_compatible", "custom", "mock"}
+    if resolved_provider not in allowed_providers:
+        raise ValueError(f"Provider must be one of {allowed_providers}, got '{resolved_provider}'.")
 
-    if not resolved_api_key:
-        raise EnvironmentError(
-            f"{api_env_name} is missing. "
-            "Check your .env file."
-        )
-
-    resolved_model = model or (
-        DEFAULT_MODEL if resolved_provider == "gemini"
-        else os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
-    )
+    if resolved_provider == "mock":
+        resolved_api_key = api_key or "mock-key"
+        resolved_model = model or "mock-model"
+    elif resolved_provider == "gemini":
+        resolved_api_key = api_key or os.getenv("GEMINI_API_KEY")
+        if not resolved_api_key:
+            raise EnvironmentError("GEMINI_API_KEY is missing. Check your settings or .env file.")
+        resolved_model = model or DEFAULT_MODEL
+    elif resolved_provider == "groq":
+        resolved_api_key = api_key or os.getenv("GROQ_API_KEY")
+        if not resolved_api_key:
+            raise EnvironmentError("GROQ_API_KEY is missing. Check your settings or .env file.")
+        resolved_model = model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    else:  # openai, openai_compatible, custom
+        resolved_api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not resolved_api_key:
+            raise EnvironmentError("API key is missing for OpenAI-compatible provider. Check your settings or .env file.")
+        resolved_model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
     system_prompt = load_evaluation_prompt()
     prompt_hash = calculate_evaluation_fingerprint(
@@ -624,7 +662,56 @@ def evaluate_promos(
     print("=====================================")
 
     if not valid_promos:
-        raise ValueError("No valid promos were supplied for evaluation.")
+        return {
+            "evaluated_promos": [],
+            "recommended_promos": [],
+            "promos_needing_revision": [],
+            "rejected_promos": [],
+            "structurally_invalid_promos": invalid_promos,
+            "statistics": {
+                "total_valid_promos": 0,
+                "total_invalid_promos_skipped": len(invalid_promos),
+                "total_evaluated": 0,
+                "recommended": 0,
+                "needs_revision": 0,
+                "rejected": 0,
+                "batch_size": batch_size,
+                "total_batches": 0,
+                "model": resolved_model,
+                "provider": resolved_provider,
+                "prompt_sha256": prompt_hash,
+            },
+        }
+
+    # Cache reuse check
+    reused_promos = []
+    pending_promos = []
+
+    cache_target = Path(cached_evaluations_path) if cached_evaluations_path else OUTPUT_PATH
+    if reuse_cache and cache_target.exists():
+        previous_evaluations, previous_prompt_hash = load_previous_evaluations(cache_target)
+        prompt_is_unchanged = (previous_prompt_hash == prompt_hash)
+        if prompt_is_unchanged:
+            for promo in valid_promos:
+                p_id = promo.get("promo_id")
+                prev_item = previous_evaluations.get(p_id)
+                if prev_item:
+                    curr_payload = prepare_promo_for_evaluation(promo)
+                    prev_payload = prepare_promo_for_evaluation(prev_item)
+                    if curr_payload == prev_payload:
+                        reused = dict(promo)
+                        reused["evaluation"] = prev_item["evaluation"]
+                        reused["evaluation_status"] = "completed"
+                        reused_promos.append(reused)
+                        continue
+                pending_promos.append(promo)
+        else:
+            pending_promos = list(valid_promos)
+    else:
+        pending_promos = list(valid_promos)
+
+    if reused_promos:
+        print(f"Reusing {len(reused_promos)} cached evaluations (prompt and content match).")
 
     client = (
         genai.Client(api_key=resolved_api_key)
@@ -633,29 +720,23 @@ def evaluate_promos(
 
     prepared_promos = [
         prepare_promo_for_evaluation(promo)
-        for promo in valid_promos
+        for promo in pending_promos
     ]
 
     evaluations_by_id = {}
-
     total_batches = (
         len(prepared_promos) + batch_size - 1
-    ) // batch_size
+    ) // batch_size if prepared_promos else 0
 
     for batch_number, start in enumerate(
         range(0, len(prepared_promos), batch_size),
         start=1,
     ):
-
-        batch = prepared_promos[
-            start:start + batch_size
-        ]
-
+        batch = prepared_promos[start:start + batch_size]
         print(
             f"\nEvaluating batch {batch_number}/{total_batches} "
             f"({len(batch)} promos)..."
         )
-
         batch_results = evaluate_promo_batch(
             client=client,
             batch=batch,
@@ -663,25 +744,28 @@ def evaluate_promos(
             model=resolved_model,
             max_retries=max_retries,
             provider=resolved_provider,
+            api_key=resolved_api_key,
+            base_url=base_url,
         )
-
         evaluations_by_id.update(batch_results)
 
-    evaluated_promos = []
-
-    for promo in valid_promos:
-
+    newly_evaluated = []
+    for promo in pending_promos:
         promo_id = promo.get("promo_id")
         evaluation = evaluations_by_id.get(promo_id)
-
         if evaluation is None:
             continue
-
         evaluated = dict(promo)
         evaluated["evaluation"] = evaluation
         evaluated["evaluation_status"] = "completed"
+        newly_evaluated.append(evaluated)
 
-        evaluated_promos.append(evaluated)
+    evaluated_promos = reused_promos + newly_evaluated
+
+    evaluated_promos.sort(
+        key=lambda item: item["evaluation"]["overall_score"],
+        reverse=True,
+    )
 
     recommended = [
         promo for promo in evaluated_promos
@@ -698,15 +782,12 @@ def evaluate_promos(
         if promo["evaluation"]["decision"] == "reject"
     ]
 
-    evaluated_promos.sort(
-        key=lambda item: item["evaluation"]["overall_score"],
-        reverse=True,
-    )
-
     statistics = {
         "total_valid_promos": len(valid_promos),
         "total_invalid_promos_skipped": len(invalid_promos),
         "total_evaluated": len(evaluated_promos),
+        "reused_evaluations": len(reused_promos),
+        "newly_evaluated": len(newly_evaluated),
         "recommended": len(recommended),
         "needs_revision": len(needs_revision),
         "rejected": len(rejected),
@@ -727,7 +808,7 @@ def evaluate_promos(
     }
 
     print("\n========== EVALUATION RESULTS ==========")
-    print(f"Evaluated: {statistics['total_evaluated']}")
+    print(f"Evaluated: {statistics['total_evaluated']} (Reused: {len(reused_promos)}, New: {len(newly_evaluated)})")
     print(f"Recommended: {statistics['recommended']}")
     print(f"Needs revision: {statistics['needs_revision']}")
     print(f"Rejected: {statistics['rejected']}")
@@ -862,17 +943,20 @@ def print_evaluation_summary(
 # LOAD PREVIOUS EVALUATIONS
 # ============================================================
 
-def load_previous_evaluations() -> tuple[
+def load_previous_evaluations(
+    output_path: Path | str = OUTPUT_PATH,
+) -> tuple[
     dict[str, dict[str, Any]],
     str | None,
 ]:
     """Load previous results and their prompt fingerprint."""
 
-    if not OUTPUT_PATH.exists():
+    target = Path(output_path)
+    if not target.exists():
         return {}, None
 
     try:
-        with OUTPUT_PATH.open(
+        with target.open(
             "r",
             encoding="utf-8",
         ) as file:
@@ -964,183 +1048,16 @@ if __name__ == "__main__":
         f"{current_prompt_hash[:16]}"
     )
 
-    # --------------------------------------------------------
-    # 3. Load previous evaluations.
-    # --------------------------------------------------------
-
-    previous_evaluations, previous_prompt_hash = (
-        load_previous_evaluations()
+    results = evaluate_promos(
+        validation_results,
+        provider=current_provider,
+        model=current_model,
+        batch_size=DEFAULT_BATCH_SIZE,
+        reuse_cache=True,
     )
 
-    # --------------------------------------------------------
-    # 4. Decide whether previous evaluations can be reused.
-    # --------------------------------------------------------
-
-    reused_promos = []
-    pending_promos = []
-
-    prompt_is_unchanged = (
-        previous_prompt_hash == current_prompt_hash
-    )
-
-    if prompt_is_unchanged:
-        print(
-            "\nEvaluation prompt unchanged. "
-            "Matching previous evaluations may be reused."
-        )
-    else:
-        print(
-            "\nEvaluation prompt has changed or no matching "
-            "prompt fingerprint exists."
-        )
-        print(
-            "Previous evaluations will NOT be reused."
-        )
-
-    for promo in valid_promos:
-
-        promo_id = promo.get("promo_id")
-        previous_item = previous_evaluations.get(promo_id)
-
-        # Reuse is allowed only if the prompt AND promo content
-        # are both unchanged.
-        if prompt_is_unchanged and previous_item:
-
-            current_payload = prepare_promo_for_evaluation(
-                promo
-            )
-
-            previous_payload = prepare_promo_for_evaluation(
-                previous_item
-            )
-
-            if current_payload == previous_payload:
-
-                reused_item = dict(promo)
-
-                reused_item["evaluation"] = (
-                    previous_item["evaluation"]
-                )
-
-                reused_item["evaluation_status"] = "completed"
-
-                reused_promos.append(reused_item)
-                continue
-
-        pending_promos.append(promo)
-
-    print("\n========== EVALUATION PLAN ==========")
-    print(f"Previous evaluations available: {len(previous_evaluations)}")
-    print(f"Previous evaluations reused: {len(reused_promos)}")
-    print(f"Promos requiring new evaluation: {len(pending_promos)}")
-    print("=====================================")
-
-    # --------------------------------------------------------
-    # 5. Evaluate new or changed promos.
-    # --------------------------------------------------------
-
-    newly_evaluated = []
-
-    if pending_promos:
-
-        new_results = evaluate_promos(
-            {
-                "valid_promos": pending_promos,
-                "invalid_promos": [],
-            },
-            batch_size=DEFAULT_BATCH_SIZE,
-            provider=current_provider,
-            model=current_model,
-        )
-
-        newly_evaluated = new_results["evaluated_promos"]
-
-    else:
-
-        print(
-            "\nAll promos already have matching evaluations."
-        )
-
-    # --------------------------------------------------------
-    # 6. Combine reused and newly evaluated results.
-    # --------------------------------------------------------
-
-    evaluated_promos = (
-        reused_promos + newly_evaluated
-    )
-
-    evaluated_promos.sort(
-        key=lambda item: item["evaluation"]["overall_score"],
-        reverse=True,
-    )
-
-    recommended = [
-        item for item in evaluated_promos
-        if item["evaluation"]["decision"] == "recommend"
-    ]
-
-    needs_revision = [
-        item for item in evaluated_promos
-        if item["evaluation"]["decision"] == "revise"
-    ]
-
-    rejected = [
-        item for item in evaluated_promos
-        if item["evaluation"]["decision"] == "reject"
-    ]
-
-    # --------------------------------------------------------
-    # 7. Create the complete evaluation result.
-    # --------------------------------------------------------
-
-    results = {
-        "evaluated_promos": evaluated_promos,
-        "recommended_promos": recommended,
-        "promos_needing_revision": needs_revision,
-        "rejected_promos": rejected,
-        "structurally_invalid_promos": invalid_promos,
-        "statistics": {
-            "total_valid_promos": len(valid_promos),
-            "total_invalid_promos_skipped": len(invalid_promos),
-            "total_evaluated": len(evaluated_promos),
-            "recommended": len(recommended),
-            "needs_revision": len(needs_revision),
-            "rejected": len(rejected),
-            "reused_existing_evaluations": len(reused_promos),
-            "newly_evaluated": len(newly_evaluated),
-            "batch_size": DEFAULT_BATCH_SIZE,
-            "total_batches": (
-                (len(newly_evaluated) + DEFAULT_BATCH_SIZE - 1)
-                // DEFAULT_BATCH_SIZE
-            ),
-            "model": current_model,
-            "provider": current_provider,
-            "prompt_sha256": current_prompt_hash,
-        },
-    }
-
-    # --------------------------------------------------------
-    # 8. Back up old results and save new results.
-    # --------------------------------------------------------
-
-    if newly_evaluated:
+    if results["statistics"]["newly_evaluated"] > 0:
         backup_existing_results()
 
     save_evaluation_results(results)
-
-    # --------------------------------------------------------
-    # 9. Display results.
-    # --------------------------------------------------------
-
     print_evaluation_summary(results)
-
-    print("\n========== FINAL EVALUATION SUMMARY ==========")
-    print(f"Validated promos: {len(valid_promos)}")
-    print(f"Evaluated promos: {len(evaluated_promos)}")
-    print(f"Reused evaluations: {len(reused_promos)}")
-    print(f"New evaluations: {len(newly_evaluated)}")
-    print(f"Recommended: {len(recommended)}")
-    print(f"Needs revision: {len(needs_revision)}")
-    print(f"Rejected: {len(rejected)}")
-    print(f"Prompt fingerprint: {current_prompt_hash[:16]}")
-    print("==============================================")

@@ -34,7 +34,16 @@ def validate_candidate(candidate, scene_lookup, min_duration=20, max_duration=60
     ):
         return False, "Invalid timestamp or duration value."
 
-    if start < scene["scene_start"] or end > scene["scene_end"]:
+    scene_start = scene.get("scene_start")
+    scene_end = scene.get("scene_end")
+    if scene_start is None and scene.get("events"):
+        scene_start = min(e["start_time"] for e in scene["events"])
+    if scene_end is None and scene.get("events"):
+        scene_end = max(e["end_time"] for e in scene["events"])
+
+    if scene_start is not None and start < scene_start - 0.05:
+        return False, "Candidate exceeds scene boundaries."
+    if scene_end is not None and end > scene_end + 0.05:
         return False, "Candidate exceeds scene boundaries."
 
     if end <= start:

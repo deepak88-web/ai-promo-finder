@@ -3,12 +3,6 @@
 import sys
 from pathlib import Path
 
-BUNDLED_PY = Path(
-    r"C:\Program Files\WindowsApps\OpenAI.CodexPrimaryRuntime.v26-1117-835-0_26.1117.835.0_x64__3k8sg7r9htsxt\dependencies\python"
-)
-if (BUNDLED_PY / "Lib" / "site-packages").exists():
-    sys.path.insert(0, str(BUNDLED_PY / "Lib" / "site-packages"))
-
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 from reportlab.lib.pagesizes import letter

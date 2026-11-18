@@ -18,15 +18,20 @@ def expand_to_minimum_duration(
     start_time -= extra_time / 2
     end_time += extra_time / 2
 
-    if start_time < scene_start:
-        end_time += scene_start - start_time
+    if scene_start is not None and start_time < scene_start:
+        if scene_end is not None:
+            end_time += scene_start - start_time
         start_time = scene_start
 
-    if end_time > scene_end:
-        start_time -= end_time - scene_end
+    if scene_end is not None and end_time > scene_end:
+        if scene_start is not None:
+            start_time -= end_time - scene_end
         end_time = scene_end
 
-    start_time = max(start_time, scene_start)
+    if scene_start is not None:
+        start_time = max(start_time, scene_start)
+    if scene_end is not None:
+        end_time = min(end_time, scene_end)
 
     return round(start_time, 2), round(end_time, 2)
 
@@ -84,11 +89,18 @@ def create_selection_windows(
                 event["end_time"] for event in events
             )
 
+            scene_start = scene.get("scene_start")
+            scene_end = scene.get("scene_end")
+            if scene_start is None and scene.get("events"):
+                scene_start = min(e["start_time"] for e in scene["events"])
+            if scene_end is None and scene.get("events"):
+                scene_end = max(e["end_time"] for e in scene["events"])
+
             start_time, end_time = expand_to_minimum_duration(
                 start_time,
                 end_time,
-                scene["scene_start"],
-                scene["scene_end"],
+                scene_start,
+                scene_end,
                 min_duration
             )
 
@@ -97,22 +109,40 @@ def create_selection_windows(
             if duration < min_duration or duration > max_duration:
                 continue
 
+            # Collect all events in the scene within this window
+            window_events = [
+                e for e in scene.get("events", [])
+                if e.get("end_time", -1) > start_time and e.get("start_time", 1e9) < end_time
+            ]
+            all_event_ids = sorted(set(
+                [event["event_id"] for event in events] +
+                [e.get("event_id") for e in window_events if e.get("event_id")]
+            ))
+
+            dialogue_lines = []
+            for e in window_events:
+                speaker = e.get("speaker") or (e.get("type") or "EVENT").upper()
+                text = (e.get("text") or "").strip()
+                t_stamp = e.get("start_timestamp") or f"{e.get('start_time', 0):.2f}"
+                dialogue_lines.append(f"[{t_stamp}] {speaker}: {text}")
+            dialogue_excerpt = "\n".join(dialogue_lines)
+
             windows.append({
                 "scene_number": scene_number,
                 "start_time": start_time,
                 "end_time": end_time,
                 "duration": duration,
                 "selection_ids": [selection["selection_id"]],
-                "event_ids": [
-                    event["event_id"] for event in events
-                ],
+                "event_ids": all_event_ids,
                 "event_categories": [
                     selection["event_category"]
                 ],
                 "descriptions": [
                     selection["description"]
                 ],
-                "importance": selection["importance"]
+                "importance": selection["importance"],
+                "source_events": window_events,
+                "dialogue_excerpt": dialogue_excerpt,
             })
 
     return sorted(
@@ -195,6 +225,26 @@ def merge_overlapping_windows(
                 previous["importance"],
                 window["importance"]
             )
+
+            # Merge source events and deduplicate
+            merged_events = previous.get("source_events", []) + window.get("source_events", [])
+            seen_ev = set()
+            deduped_events = []
+            for ev in merged_events:
+                eid = ev.get("event_id") or id(ev)
+                if eid not in seen_ev:
+                    seen_ev.add(eid)
+                    deduped_events.append(ev)
+            deduped_events.sort(key=lambda e: (e.get("start_time", 0), e.get("end_time", 0)))
+            previous["source_events"] = deduped_events
+
+            dialogue_lines = []
+            for e in deduped_events:
+                speaker = e.get("speaker") or (e.get("type") or "EVENT").upper()
+                text = (e.get("text") or "").strip()
+                t_stamp = e.get("start_timestamp") or f"{e.get('start_time', 0):.2f}"
+                dialogue_lines.append(f"[{t_stamp}] {speaker}: {text}")
+            previous["dialogue_excerpt"] = "\n".join(dialogue_lines)
 
             # Remove duplicate IDs and restore chronological order.
             previous["event_ids"] = sorted(

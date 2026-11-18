@@ -1,0 +1,22 @@
+services:
+  ai-promo-finder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-promo-finder-app
+    ports:
+      - "8501:8501"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8501
+      # Optional API keys passed from host environment or .env file
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - PROMO_EVALUATION_PROVIDER=${PROMO_EVALUATION_PROVIDER:-gemini}
+      - PROMO_EVALUATION_MODEL=${PROMO_EVALUATION_MODEL:-gemini-2.5-flash}
+    volumes:
+      # Mount outputs to persist reports, CSVs, and JSON files on host machine
+      - ./outputs:/app/outputs
+      - ./sample_data:/app/sample_data:ro
+    restart: unless-stopped

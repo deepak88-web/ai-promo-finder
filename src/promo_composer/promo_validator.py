@@ -517,6 +517,7 @@ def validate_hook(promo, normalized_segments, warnings):
             "MISSING_HOOK_METADATA",
             "Hook metadata is missing or invalid.",
         )
+        promo["requires_manual_review"] = True
         return
 
     if not normalized_segments:
@@ -527,9 +528,10 @@ def validate_hook(promo, normalized_segments, warnings):
     if not hook.get("identified"):
         add_warning(
             warnings,
-            "HOOK_NOT_IDENTIFIED",
+            "NO_HOOK_IN_OPENING",
             "No opening hook evidence was identified.",
         )
+        promo["requires_manual_review"] = True
         return
 
     promo_start = first_segment["start_time"]
@@ -689,6 +691,7 @@ def validate_cliffhanger(promo, normalized_segments, warnings):
             "MISSING_CLIFFHANGER_METADATA",
             "Cliffhanger metadata is missing or invalid.",
         )
+        promo["requires_manual_review"] = True
         return
 
     if not normalized_segments:
@@ -699,9 +702,10 @@ def validate_cliffhanger(promo, normalized_segments, warnings):
     if not cliffhanger.get("identified"):
         add_warning(
             warnings,
-            "CLIFFHANGER_NOT_IDENTIFIED",
+            "NO_CLIFFHANGER_AT_ENDING",
             "No ending cliffhanger evidence was identified.",
         )
+        promo["requires_manual_review"] = True
         return
 
     promo_end = last_segment["end_time"]
@@ -877,16 +881,10 @@ def validate_promo(promo):
         warnings,
     )
 
-    # Standalone coherence cannot be established by timestamp
-    # checks. It is assessed by the complete-promo evaluator.
-    add_warning(
-        warnings,
-        "STANDALONE_COHERENCE_PENDING",
-        (
-            "Standalone coherence and audience comprehension "
-            "must be assessed by promo_evaluator.py."
-        ),
-    )
+    # Check if any warnings require manual review
+    if warnings and not promo.get("requires_manual_review"):
+        # If there are genuine warnings, flag for editorial review
+        promo["requires_manual_review"] = True
 
     if promo.get("requires_manual_review"):
         add_warning(
@@ -917,6 +915,10 @@ def validate_promo(promo):
     promo["is_valid"] = validation_status == "passed"
 
     return promo
+
+
+# Alias for single promo validation
+validate_single_promo = validate_promo
 
 
 # ============================================================

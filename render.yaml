@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ai-promo-finder
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: STREAMLIT_SERVER_HEADLESS
+        value: "true"
+      - key: STREAMLIT_SERVER_ADDRESS
+        value: "0.0.0.0"
+      - key: PROMO_EVALUATION_PROVIDER
+        value: gemini
+      - key: PROMO_EVALUATION_MODEL
+        value: gemini-2.5-flash
+      # Optional: set these in Render dashboard if you prefer backend keys,
+      # otherwise users can input their own keys in the frontend UI.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false

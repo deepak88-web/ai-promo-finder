@@ -45,22 +45,25 @@ def find_episode(parsed_data, episode_id):
     )
 
 
-def run_candidate_generation(episode_number=22, parsed_data_path=PARSED_DATA_PATH, output_dir=OUTPUT_DIR):
+def run_candidate_generation(episode_number=22, parsed_data_path=None, output_dir=None, raw_dir=None, parsed_path=None):
     """Run candidate generation for the requested episode."""
+
+    actual_parsed = Path(parsed_path or parsed_data_path or PARSED_DATA_PATH)
+    actual_output = Path(raw_dir or output_dir or OUTPUT_DIR)
 
     episode_id = f"EP{int(episode_number):03d}"
 
     layer1_results_path = (
-        Path(output_dir) / f"layer1_episode{episode_number}_events.json"
+        actual_output / f"layer1_episode{episode_number}_events.json"
     )
 
     output_path = (
-        Path(output_dir) / f"candidates_episode{episode_number}.json"
+        actual_output / f"candidates_episode{episode_number}.json"
     )
 
     print("\n===== CANDIDATE GENERATION PIPELINE =====")
 
-    parsed_data = load_json(Path(parsed_data_path))
+    parsed_data = load_json(actual_parsed)
     layer1_result = load_json(layer1_results_path)
 
     if layer1_result.get("episode") != episode_id:
@@ -163,7 +166,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.episode < 1 or args.episode > 50:
-        parser.error("Episode number must be between 1 and 50.")
+    if args.episode < 1:
+        parser.error("Episode number must be at least 1.")
 
     run_candidate_generation(args.episode)
