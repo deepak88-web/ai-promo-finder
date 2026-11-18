@@ -16,7 +16,7 @@ services:
       - key: PROMO_EVALUATION_PROVIDER
         value: gemini
       - key: PROMO_EVALUATION_MODEL
-        value: gemini-2.5-flash
+        value: gemini-3.6-flash
       # Optional: set these in Render dashboard if you prefer backend keys,
       # otherwise users can input their own keys in the frontend UI.
       - key: GEMINI_API_KEY
