@@ -1,6 +1,7 @@
 
 import json
 import argparse
+import re
 from pathlib import Path
 
 from src.candidate_generation.event_analyzer import analyze_selections
@@ -35,7 +36,8 @@ def find_episode(parsed_data, episode_id):
     episode_number = int(episode_id[2:])
 
     for episode in parsed_data["episodes"]:
-        if episode["episode"] == f"Episode {episode_number}":
+        match = re.search(r"\d+", str(episode.get("episode", "")))
+        if match and int(match.group()) == episode_number:
             return episode
 
     raise ValueError(
@@ -43,22 +45,22 @@ def find_episode(parsed_data, episode_id):
     )
 
 
-def run_candidate_generation(episode_number=22):
+def run_candidate_generation(episode_number=22, parsed_data_path=PARSED_DATA_PATH, output_dir=OUTPUT_DIR):
     """Run candidate generation for the requested episode."""
 
     episode_id = f"EP{int(episode_number):03d}"
 
     layer1_results_path = (
-        OUTPUT_DIR / f"layer1_episode{episode_number}_events.json"
+        Path(output_dir) / f"layer1_episode{episode_number}_events.json"
     )
 
     output_path = (
-        OUTPUT_DIR / f"candidates_episode{episode_number}.json"
+        Path(output_dir) / f"candidates_episode{episode_number}.json"
     )
 
     print("\n===== CANDIDATE GENERATION PIPELINE =====")
 
-    parsed_data = load_json(PARSED_DATA_PATH)
+    parsed_data = load_json(Path(parsed_data_path))
     layer1_result = load_json(layer1_results_path)
 
     if layer1_result.get("episode") != episode_id:

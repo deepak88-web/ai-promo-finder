@@ -1,5 +1,6 @@
 
 import re
+from itertools import combinations
 from collections import Counter
 from typing import Any
 
@@ -18,6 +19,7 @@ MAX_CANDIDATE_SEGMENTS = 100
 MAX_CANDIDATES_PER_EPISODE = 3
 MAX_CROSS_EPISODE_PAIRS = 40
 MAX_PAIRS_PER_EVENT = 3
+MAX_SAME_EPISODE_COMBINATIONS = 28
 
 VALID_CLASSIFICATIONS = {"strong", "possible"}
 
@@ -272,6 +274,272 @@ def select_candidate_segments(
             break
 
     return final_segments
+
+
+def select_same_episode_combinations(
+    candidate_segments,
+    max_combinations=MAX_SAME_EPISODE_COMBINATIONS,
+    max_segments_per_promo=3,
+):
+    """Create chronological same-episode montages from scored windows.
+
+    Source windows must be non-overlapping, use distinct source events, and
+    sum to the actual 20-60 second promo range. These are candidates for
+    editorial/evaluator review; same-episode proximity alone does not prove
+    narrative continuity.
+    """
+    by_episode = {}
+    for segment in candidate_segments:
+        by_episode.setdefault(segment.get("episode"), []).append(segment)
+
+    pair_combinations = []
+    triple_combinations = []
+    for episode, episode_segments in by_episode.items():
+        ordered = sorted(episode_segments, key=lambda item: item["start_time"])
+        for count in range(2, min(max_segments_per_promo, len(ordered)) + 1):
+            for group in combinations(ordered, count):
+                if any(
+                    group[index + 1]["start_time"] < group[index]["end_time"]
+                    for index in range(len(group) - 1)
+                ):
+                    continue
+                event_ids = [
+                    event_id
+                    for segment in group
+                    for event_id in segment.get("event_ids", [])
+                    if event_id
+                ]
+                if len(event_ids) != len(set(event_ids)):
+                    continue
+                total = round(sum(item["duration"] for item in group), 3)
+                if not 20.0 <= total <= 60.0:
+                    continue
+                item = {
+                    "combination_id": "SAME_" + "_".join(
+                        item["candidate_id"] for item in group
+                    ),
+                    "source_type": "same_episode_montage",
+                    "connection_mode": "same_episode_chronological",
+                    "ordered_segments": list(group),
+                    "segment_count": count,
+                    "combined_source_duration": total,
+                    "connection_explanation": (
+                        f"All segments come from {episode} and remain in "
+                        "source chronology. Episode identity and chronology "
+                        "do not establish story continuity; editorial review required."
+                    ),
+                    "sequence_explanation": (
+                        "Segments are ordered by source timestamp. Review the "
+                        "transitions for standalone clarity and narrative flow."
+                    ),
+                    "promo_rationale": "Chronological same-episode montage candidate.",
+                    "requires_manual_review": True,
+                    "selection_score": round(sum(
+                        item.get("selection_score", 0) for item in group
+                    ) / count, 2),
+                }
+                if count == 2:
+                    pair_combinations.append(item)
+                else:
+                    triple_combinations.append(item)
+
+        # Three short, evidence-backed excerpts can make a 20-60 second
+        # chronological montage even when the full candidate windows exceed
+        # 60 seconds together.
+        for group in combinations(ordered, 3):
+            if any(
+                group[index + 1]["start_time"] < group[index]["end_time"]
+                for index in range(len(group) - 1)
+            ):
+                continue
+            cropped = []
+            for index, segment in enumerate(group):
+                events = sorted(
+                    segment.get("source_events", []),
+                    key=lambda event: float(event.get("start_time", 0)),
+                )
+                if not events:
+                    cropped = []
+                    break
+                anchor = events[0] if index == 0 else events[-1] if index == 2 else events[len(events) // 2]
+                anchor_start = float(anchor.get("start_time", segment["start_time"]))
+                anchor_end = float(anchor.get("end_time", segment["end_time"]))
+                if index == 0:
+                    start = max(float(segment["start_time"]), anchor_start)
+                    end = min(float(segment["end_time"]), start + 10.0)
+                elif index == 2:
+                    end = min(float(segment["end_time"]), anchor_end)
+                    start = max(float(segment["start_time"]), end - 10.0)
+                else:
+                    midpoint = (anchor_start + anchor_end) / 2
+                    start = max(float(segment["start_time"]), midpoint - 5.0)
+                    end = min(float(segment["end_time"]), start + 10.0)
+                if end <= start:
+                    cropped = []
+                    break
+                kept_events = [
+                    event for event in events
+                    if float(event.get("end_time", -1)) > start
+                    and float(event.get("start_time", 1e12)) < end
+                ]
+                if not kept_events:
+                    cropped = []
+                    break
+                cropped.append({
+                    **segment,
+                    "segment_id": f"{segment['segment_id']}_EXCERPT_{index + 1}",
+                    "start_time": round(start, 3),
+                    "end_time": round(end, 3),
+                    "duration": round(end - start, 3),
+                    "event_ids": [event.get("event_id") for event in kept_events if event.get("event_id")],
+                    "source_events": kept_events,
+                    "text": " ".join(str(event.get("text", "")) for event in kept_events),
+                })
+            if len(cropped) != 3:
+                continue
+            total = round(sum(item["duration"] for item in cropped), 3)
+            if not 20.0 <= total <= 60.0:
+                continue
+            event_ids = [event_id for segment in cropped for event_id in segment.get("event_ids", [])]
+            if len(event_ids) != len(set(event_ids)):
+                continue
+            triple_combinations.append({
+                "combination_id": "SAME3_" + "_".join(item["candidate_id"] for item in group),
+                "source_type": "same_episode_three_excerpt_montage",
+                "connection_mode": "same_episode_chronological",
+                "ordered_segments": cropped,
+                "segment_count": 3,
+                "combined_source_duration": total,
+                "connection_explanation": (
+                    f"Three source excerpts from {episode}, kept in screenplay chronology. "
+                    "The excerpts share episode context but narrative continuity is not established."
+                ),
+                "sequence_explanation": "Three chronological excerpts; review each transition and standalone clarity.",
+                "promo_rationale": "Three-part same-episode montage candidate.",
+                "requires_manual_review": True,
+                "selection_score": round(sum(item.get("selection_score", 0) for item in group) / 3, 2),
+            })
+
+    pair_combinations.sort(
+        key=lambda item: (item["selection_score"], item["segment_count"]),
+        reverse=True,
+    )
+    triple_combinations.sort(
+        key=lambda item: item["selection_score"],
+        reverse=True,
+    )
+    pair_limit = min(18, max_combinations)
+    triple_limit = max(0, max_combinations - pair_limit)
+    return pair_combinations[:pair_limit] + triple_combinations[:triple_limit]
+
+
+def build_verified_hub_montages(eligible_combinations, event_lookup):
+    """Join two approved V4 edges around a shared source event.
+
+    The shared event is shown once. Each spoke has its own V4 evidence; the
+    final spoke-to-spoke cut is editorial and is explicitly queued for review.
+    """
+    by_anchor = {}
+    for combo in eligible_combinations:
+        segments = combo.get("ordered_segments", [])
+        if len(segments) != 2:
+            continue
+        for index, segment in enumerate(segments):
+            event_id = segment.get("anchor_event_id") or segment.get("event_id")
+            if not event_id:
+                continue
+            others = [other for j, other in enumerate(segments) if j != index]
+            by_anchor.setdefault(event_id, []).append((combo, segment, others))
+
+    drafts = []
+    for anchor_id, rows in by_anchor.items():
+        distinct_spokes = {}
+        for combo, hub_segment, spokes in rows:
+            for spoke in spokes:
+                spoke_id = spoke.get("anchor_event_id") or spoke.get("event_id")
+                if spoke_id and spoke_id != anchor_id:
+                    distinct_spokes[spoke_id] = (combo, hub_segment, spoke)
+        if len(distinct_spokes) < 2:
+            continue
+
+        anchor_event = event_lookup.get(anchor_id)
+        if not anchor_event:
+            continue
+        chosen = list(distinct_spokes.values())[:2]
+        ordered_source = [chosen[0][1], chosen[0][2], chosen[1][2]]
+        clipped = []
+        for index, source in enumerate(ordered_source):
+            event_id = source.get("anchor_event_id") or source.get("event_id")
+            event = event_lookup.get(event_id)
+            if not event:
+                clipped = []
+                break
+            start = float(event["start_time"])
+            end = float(event["end_time"])
+            # Put the first evidence at the opening; let the final source
+            # event land on the promo cut. Keep every interval evidence-backed.
+            if index == 0:
+                clip_start, clip_end = start, min(float(source["end_time"]), end + 6.0)
+            elif index == 2:
+                clip_start, clip_end = max(float(source["start_time"]), start - 6.0), end
+            else:
+                clip_start = max(float(source["start_time"]), start - 4.0)
+                clip_end = min(float(source["end_time"]), end + 4.0)
+            if clip_end <= clip_start:
+                clipped = []
+                break
+            keep_events = [
+                item for item in source.get("source_events", [])
+                if float(item.get("end_time", -1)) > clip_start
+                and float(item.get("start_time", 1e12)) < clip_end
+            ]
+            clipped.append({
+                **source,
+                "segment_id": f"SEG_{event_id}_CLIP_{index + 1}",
+                "start_time": round(clip_start, 3),
+                "end_time": round(clip_end, 3),
+                "duration": round(clip_end - clip_start, 3),
+                "anchor_event_id": event_id,
+                "event_id": event_id,
+                "event_ids": sorted({
+                    item.get("event_id") for item in keep_events
+                    if item.get("event_id")
+                } | {event_id}),
+                "source_events": keep_events or [{
+                    "event_id": event_id,
+                    "text": event.get("text", ""),
+                    "start_time": event.get("start_time"),
+                    "end_time": event.get("end_time"),
+                }],
+            })
+        if not clipped:
+            continue
+        total = round(sum(item["duration"] for item in clipped), 3)
+        if not 20 <= total <= 60:
+            continue
+        pair_ids = [row[0].get("combination_id") for row in chosen]
+        drafts.append({
+            "combination_id": "HUB_" + anchor_id,
+            "source_type": "verified_hub_montage",
+            "connection_mode": "verified_hub_parallel_montage",
+            "ordered_segments": clipped,
+            "segment_count": 3,
+            "combined_source_duration": total,
+            "connection_evidence_pair_ids": pair_ids,
+            "connection_explanation": (
+                f"Both outer segments have frozen V4-accepted pair evidence "
+                f"to shared event {anchor_id}. No direct narrative relationship "
+                "between the outer segments is asserted."
+            ),
+            "sequence_explanation": (
+                "Hub event first, followed by two parallel evidence-linked "
+                "moments. The second-to-third transition needs human review."
+            ),
+            "promo_rationale": "Evidence-linked hub montage; editorial review required.",
+            "requires_manual_review": True,
+            "semantic_score": min(row[0].get("semantic_score", 0) for row in chosen),
+        })
+    return drafts
 
 
 # ============================================================
@@ -835,6 +1103,15 @@ def select_promo_segments(
         max_pairs=max_cross_episode_pairs,
     )
 
+    same_episode_combinations = select_same_episode_combinations(
+        candidate_segments
+    )
+
+    hub_montages = build_verified_hub_montages(
+        cross_episode_combinations,
+        event_lookup,
+    )
+
     # --------------------------------------------------------
     # Manual review
     # --------------------------------------------------------
@@ -842,6 +1119,30 @@ def select_promo_segments(
     manual_review_pairs = collect_manual_review_pairs(
         verified_pairs
     )
+
+    selected_pair_ids = {
+        item.get("combination_id") for item in cross_episode_combinations
+    }
+    verified_pair_audit = []
+    for pair in verified_pairs:
+        verification = pair.get("semantic_verification", {})
+        verified_pair_audit.append({
+            "pair_id": verification.get("pair_id"),
+            "event_a_id": pair.get("event_a", {}).get("event_id"),
+            "event_a_episode": pair.get("event_a", {}).get("episode"),
+            "event_b_id": pair.get("event_b", {}).get("event_id"),
+            "event_b_episode": pair.get("event_b", {}).get("episode"),
+            "classification": verification.get("classification"),
+            "semantic_score": verification.get("semantic_score"),
+            "relationship_type": verification.get("relationship_type"),
+            "connection_mode": verification.get("connection_mode"),
+            "best_sequence": verification.get("best_sequence"),
+            "evidence_a": verification.get("evidence_a", ""),
+            "evidence_b": verification.get("evidence_b", ""),
+            "connection_explanation": verification.get("connection_explanation", ""),
+            "requires_manual_review": verification.get("requires_manual_review", False),
+            "selected_as_pair": verification.get("pair_id") in selected_pair_ids,
+        })
 
     # --------------------------------------------------------
     # Statistics
@@ -855,6 +1156,8 @@ def select_promo_segments(
         "selected_cross_episode_combinations": len(
             cross_episode_combinations
         ),
+        "selected_same_episode_combinations": len(same_episode_combinations),
+        "selected_verified_hub_montages": len(hub_montages),
         "manual_review_pairs": len(manual_review_pairs),
         "candidate_episodes_represented": len({
             item["episode"]
@@ -877,6 +1180,14 @@ def select_promo_segments(
         f"{statistics['selected_cross_episode_combinations']}"
     )
     print(
+        f"Same-episode montage candidates: "
+        f"{statistics['selected_same_episode_combinations']}"
+    )
+    print(
+        f"Verified hub montages for review: "
+        f"{statistics['selected_verified_hub_montages']}"
+    )
+    print(
         f"Pairs requiring manual review: "
         f"{statistics['manual_review_pairs']}"
     )
@@ -886,7 +1197,10 @@ def select_promo_segments(
     return {
         "candidate_segments": candidate_segments,
         "cross_episode_combinations": cross_episode_combinations,
+        "same_episode_combinations": same_episode_combinations,
+        "verified_hub_montages": hub_montages,
         "manual_review_pairs": manual_review_pairs,
+        "verified_pair_audit": verified_pair_audit,
         "statistics": statistics,
     }
 

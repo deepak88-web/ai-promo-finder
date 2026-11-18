@@ -21,6 +21,8 @@ PROMPT_PATH = (
     PROJECT_ROOT / "src" / "llm" / "prompts"
     / "event_identification.txt"
 )
+REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
+RAW_DIR = PROJECT_ROOT / "outputs" / "raw"
 
 
 # --------------------------------------------------
@@ -46,16 +48,16 @@ def get_episode_id(episode_name):
     return f"EP{get_episode_number(episode_name):03d}"
 
 
-def get_output_paths(episode_number):
+def get_output_paths(episode_number, reports_dir=REPORT_DIR, raw_dir=RAW_DIR):
     """Create episode-specific input and result file paths."""
 
     input_output_path = (
-        PROJECT_ROOT / "outputs" / "reports"
+        Path(reports_dir)
         / f"layer1_episode{episode_number}_input.json"
     )
 
     result_output_path = (
-        PROJECT_ROOT / "outputs" / "raw"
+        Path(raw_dir)
         / f"layer1_episode{episode_number}_events.json"
     )
 
@@ -180,14 +182,15 @@ def build_layer1_request(episode):
 # 7. Load parsed episodes
 # --------------------------------------------------
 
-def load_episodes():
+def load_episodes(input_path=INPUT_PATH):
+    input_path = Path(input_path)
 
-    if not INPUT_PATH.exists():
+    if not input_path.exists():
         raise FileNotFoundError(
-            f"Parsed screenplay data not found: {INPUT_PATH}"
+            f"Parsed screenplay data not found: {input_path}"
         )
 
-    with INPUT_PATH.open("r", encoding="utf-8") as file:
+    with input_path.open("r", encoding="utf-8") as file:
         data = json.load(file)
 
     episodes = data.get("episodes", [])
@@ -447,14 +450,14 @@ def save_json(data, output_path):
 # 10. Run Layer 1 for a selected episode
 # --------------------------------------------------
 
-def run_layer1(episode_number=22):
+def run_layer1(episode_number=22, input_path=INPUT_PATH, reports_dir=REPORT_DIR, raw_dir=RAW_DIR):
 
     input_output_path, result_output_path = (
-        get_output_paths(episode_number)
+        get_output_paths(episode_number, reports_dir, raw_dir)
     )
 
     # Load screenplay data.
-    episodes = load_episodes()
+    episodes = load_episodes(input_path)
 
     # Find the requested episode.
     selected_episode = find_episode(

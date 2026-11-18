@@ -1,5 +1,6 @@
 
 import json
+import argparse
 from pathlib import Path
 
 from src.promo_composer.candidate_loader import (
@@ -30,6 +31,7 @@ V4_PATH = (
 
 # Output files
 OUTPUT_DIR = ROOT / "outputs" / "raw"
+EXPANDED_OUTPUT_DIR = OUTPUT_DIR / "expanded"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -52,10 +54,11 @@ def load_verified_pairs():
     return verified_pairs
 
 
-def save_json(data, filename):
+def save_json(data, filename, output_dir=OUTPUT_DIR):
     """Save pipeline output as formatted JSON."""
 
-    path = OUTPUT_DIR / filename
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / filename
 
     with open(path, "w", encoding="utf-8") as file:
         json.dump(data, file, indent=2, ensure_ascii=False)
@@ -63,7 +66,9 @@ def save_json(data, filename):
     print(f"Saved: {path}")
 
 
-def main():
+def main(expanded=False):
+
+    output_dir = EXPANDED_OUTPUT_DIR if expanded else OUTPUT_DIR
 
     print("\n========== AI PROMO FINDER PIPELINE ==========")
 
@@ -90,6 +95,7 @@ def main():
     save_json(
         selection_results,
         "promo_segment_selection.json",
+        output_dir,
     )
 
     # 4. Build complete promo candidates
@@ -100,6 +106,7 @@ def main():
     save_json(
         builder_results,
         "promo_builder_results.json",
+        output_dir,
     )
 
     # 5. Validate all constructed promos
@@ -110,6 +117,7 @@ def main():
     save_json(
         validation_results,
         "promo_validation_results.json",
+        output_dir,
     )
 
     print_validation_summary(validation_results)
@@ -148,7 +156,16 @@ def main():
 
     print("\nPipeline execution completed.")
     print("======================================")
+    if expanded:
+        print("Expanded draft outputs saved separately; frozen V4 input was loaded unchanged.")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Compose and validate promos from saved inputs.")
+    parser.add_argument(
+        "--expanded",
+        action="store_true",
+        help="Save expanded same-episode and verified-hub candidates under outputs/raw/expanded without overwriting baseline outputs.",
+    )
+    args = parser.parse_args()
+    main(expanded=args.expanded)

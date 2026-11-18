@@ -1,13 +1,27 @@
+# Local environments and credentials
 .venv/
+venv/
 __pycache__/
+*.py[cod]
 .env
-*.pyc
+.env.*
+!.env.example
+.streamlit/secrets.toml
 
-# Raw screenplay data
+# Local temporary files and test caches
+tmp/
+*.tmp
+.pytest_cache/
+
+# Raw screenplay source and parsed material (assignment data is confidential)
 data/raw/
-
-# Generated intermediate data
 data/interim/
 
-# Generated reports
+# Generated pipeline output, reports, and cached model results
 outputs/
+
+# Raw submission evidence and detailed quality reports contain derived story data.
+# Keep the short solution document and run instructions available for review.
+submission/raw_outputs/
+submission/quality_report.json
+submission/quality_report.md

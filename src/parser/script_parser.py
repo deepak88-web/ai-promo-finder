@@ -2,6 +2,7 @@
 import re
 import json
 import zipfile
+import argparse
 from pathlib import Path
 
 
@@ -355,40 +356,59 @@ def validate_episodes(episodes):
 # 8. Parse all TXT files
 # --------------------------------------------------
 
-def main():
-
-    zip_files = sorted(Path("data/raw").glob("*.zip"))
-
-    if not zip_files:
-        raise FileNotFoundError(
-            "No ZIP file found inside data/raw"
-        )
-
-    if len(zip_files) > 1:
-        print("Multiple ZIP files found. Using:", zip_files[0].name)
-
-    zip_path = zip_files[0]
-
+def parse_input_pack(input_path):
+    """Parse a ZIP pack, a directory of TXT scripts, or one TXT file."""
+    input_path = Path(input_path)
     parsed_episodes = []
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input screenplay path not found: {input_path}")
 
-    with zipfile.ZipFile(zip_path, "r") as archive:
-
-        txt_files = sorted(
-            name for name in archive.namelist()
-            if name.lower().endswith(".txt")
-        )
-
-        for filename in txt_files:
-
-            content = archive.read(filename).decode(
-                "utf-8-sig",
-                errors="replace"
+    if input_path.is_dir():
+        txt_paths = sorted(input_path.rglob("*.txt"))
+        if not txt_paths:
+            raise FileNotFoundError(f"No TXT screenplays found under {input_path}")
+        for path in txt_paths:
+            episode = parse_episode(
+                path.name,
+                path.read_text(encoding="utf-8-sig", errors="replace"),
             )
-
-            episode = parse_episode(filename, content)
-
             if episode:
                 parsed_episodes.append(episode)
+    elif input_path.suffix.lower() == ".zip":
+        with zipfile.ZipFile(input_path, "r") as archive:
+            txt_files = sorted(
+                name for name in archive.namelist()
+                if name.lower().endswith(".txt") and not name.endswith("/")
+            )
+            for filename in txt_files:
+                content = archive.read(filename).decode("utf-8-sig", errors="replace")
+                episode = parse_episode(filename, content)
+                if episode:
+                    parsed_episodes.append(episode)
+    elif input_path.suffix.lower() == ".txt":
+        episode = parse_episode(
+            input_path.name,
+            input_path.read_text(encoding="utf-8-sig", errors="replace"),
+        )
+        if episode:
+            parsed_episodes.append(episode)
+    else:
+        raise ValueError("Input must be a .zip, a TXT file, or a directory of TXT files.")
+
+    if not parsed_episodes:
+        raise ValueError(f"No parseable screenplay episodes found in {input_path}")
+    return parsed_episodes
+
+
+def main(input_path="data/raw", output_path="data/interim/parsed_episodes.json"):
+    input_path = Path(input_path)
+    if input_path.is_dir():
+        zip_files = sorted(input_path.glob("*.zip"))
+        if zip_files:
+            if len(zip_files) > 1:
+                print("Multiple ZIP files found. Using:", zip_files[0].name)
+            input_path = zip_files[0]
+    parsed_episodes = parse_input_pack(input_path)
 
     # Event counts
     all_events = [
@@ -433,9 +453,7 @@ def main():
     }
 
     # Save parsed JSON
-    output_path = Path(
-        "data/interim/parsed_episodes.json"
-    )
+    output_path = Path(output_path)
 
     output_path.parent.mkdir(
         parents=True,
@@ -474,4 +492,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Parse screenplay input packs into timestamped events.")
+    parser.add_argument("--input", default="data/raw", help="A ZIP, TXT file, or directory of TXT screenplays.")
+    parser.add_argument("--output", default="data/interim/parsed_episodes.json", help="Destination parsed JSON path.")
+    args = parser.parse_args()
+    main(args.input, args.output)

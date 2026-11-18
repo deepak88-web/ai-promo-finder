@@ -19,6 +19,7 @@ TIMESTAMP_TOLERANCE = 0.15
 VALID_CONSTRUCTION_TYPES = {
     "single_continuous_segment",
     "cross_episode_combination",
+    "same_episode_multi_segment",
 }
 
 
@@ -154,13 +155,34 @@ def validate_promo_structure(promo, errors, warnings):
         )
 
     if (
-        construction_type == "cross_episode_combination"
+        construction_type in {
+            "cross_episode_combination",
+            "same_episode_multi_segment",
+        }
         and len(segments) < 2
     ):
         add_error(
             errors,
             "INVALID_MULTI_SEGMENT_PROMO",
             "A cross-episode promo must contain at least two segments.",
+        )
+
+    episode_ids = {
+        str(segment.get("episode", "")).upper()
+        for segment in segments
+        if isinstance(segment, dict)
+    }
+    if construction_type == "same_episode_multi_segment" and len(episode_ids) > 1:
+        add_error(
+            errors,
+            "SAME_EPISODE_PROMO_HAS_MULTIPLE_EPISODES",
+            "A same-episode montage must use one episode only.",
+        )
+    if construction_type == "cross_episode_combination" and len(episode_ids) < 2:
+        add_error(
+            errors,
+            "CROSS_EPISODE_PROMO_HAS_ONE_EPISODE",
+            "A cross-episode promo must use at least two episodes.",
         )
 
 
@@ -483,13 +505,10 @@ def validate_promo_duration(
 # 6. VALIDATE HOOK EVIDENCE
 # ============================================================
 
-def validate_hook(promo, normalized_segments, warnings):
-    """
-    Check whether source evidence exists in the first three seconds.
 
-    This checks evidence location, not whether the evidence is
-    actually attention-grabbing.
-    """
+def validate_hook(promo, normalized_segments, warnings):
+    """Validate opening hook timing and source evidence."""
+
     hook = promo.get("hook", {})
 
     if not isinstance(hook, dict):
@@ -505,17 +524,6 @@ def validate_hook(promo, normalized_segments, warnings):
 
     first_segment = normalized_segments[0]
 
-    promo_start = first_segment["start_time"]
-    hook_window_end = promo_start + HOOK_WINDOW_SECONDS
-
-    evidence_timestamp = safe_float(
-        hook.get("timestamp")
-    )
-
-    evidence_text = normalize_text(
-        hook.get("evidence_text")
-    )
-
     if not hook.get("identified"):
         add_warning(
             warnings,
@@ -524,49 +532,155 @@ def validate_hook(promo, normalized_segments, warnings):
         )
         return
 
-    if not evidence_text:
+    promo_start = first_segment["start_time"]
+
+    validate_evidence_against_source(
+        promo=promo,
+        evidence=hook,
+        expected_segment=promo.get("segments", [])[0],
+        window_start=promo_start,
+        window_end=promo_start + HOOK_WINDOW_SECONDS,
+        evidence_type="HOOK",
+        warnings=warnings,
+    )
+
+
+def validate_evidence_against_source(
+    promo,
+    evidence,
+    expected_segment,
+    window_start,
+    window_end,
+    evidence_type,
+    warnings,
+):
+    """
+    Verify that hook/cliffhanger evidence is grounded in
+    an actual source event within the required time window.
+    """
+
+    event_id = evidence.get("evidence_event_id")
+    evidence_timestamp = safe_float(evidence.get("timestamp"))
+    evidence_text = normalize_text(evidence.get("evidence_text"))
+
+    segments = promo.get("segments", [])
+
+    if not isinstance(segments, list) or not segments:
+        return
+
+    source_events = expected_segment.get("source_events", [])
+
+    if not isinstance(source_events, list):
+        source_events = []
+
+    matching_event = next(
+        (
+            event for event in source_events
+            if isinstance(event, dict)
+            and event.get("event_id") == event_id
+        ),
+        None,
+    )
+
+    if not event_id:
         add_warning(
             warnings,
-            "HOOK_EVIDENCE_TEXT_MISSING",
-            "Hook is marked identified but has no evidence text.",
+            f"{evidence_type}_EVENT_ID_MISSING",
+            f"{evidence_type} has no source event ID.",
         )
+        return
+
+    if matching_event is None:
+        add_warning(
+            warnings,
+            f"{evidence_type}_SOURCE_EVENT_NOT_FOUND",
+            f"{evidence_type} evidence event was not found in its source segment.",
+        )
+        return
+
+    evidence_episode = evidence.get("episode")
+    segment_episode = expected_segment.get("episode")
+    if (
+        evidence_episode
+        and segment_episode
+        and str(evidence_episode).upper() != str(segment_episode).upper()
+    ):
+        add_warning(
+            warnings,
+            f"{evidence_type}_EPISODE_MISMATCH",
+            "Evidence episode does not match the boundary segment episode.",
+        )
+
+    event_start = safe_float(matching_event.get("start_time"))
+    event_end = safe_float(matching_event.get("end_time"))
 
     if evidence_timestamp is None:
         add_warning(
             warnings,
-            "HOOK_TIMESTAMP_MISSING",
-            "Hook evidence has no valid timestamp.",
+            f"{evidence_type}_TIMESTAMP_MISSING",
+            "Evidence timestamp is missing or invalid.",
         )
         return
 
-    if (
-        evidence_timestamp < promo_start
-        or evidence_timestamp > hook_window_end
+    if event_start is None or event_end is None:
+        add_warning(
+            warnings,
+            f"{evidence_type}_SOURCE_TIMESTAMP_MISSING",
+            "Referenced source event has no valid timestamps.",
+        )
+    elif (
+        evidence_timestamp < event_start - TIMESTAMP_TOLERANCE
+        or evidence_timestamp > event_end + TIMESTAMP_TOLERANCE
     ):
         add_warning(
             warnings,
-            "HOOK_OUTSIDE_OPENING_WINDOW",
-            (
-                "Hook evidence is not located within the first "
-                "three seconds of the promo."
-            ),
+            f"{evidence_type}_SOURCE_TIMESTAMP_MISMATCH",
+            "Evidence timestamp does not fall within its referenced source event.",
         )
 
+    if not (
+        window_start - TIMESTAMP_TOLERANCE
+        <= evidence_timestamp
+        <= window_end + TIMESTAMP_TOLERANCE
+    ):
+        add_warning(
+            warnings,
+            f"{evidence_type}_OUTSIDE_REQUIRED_WINDOW",
+            f"{evidence_type} evidence is outside its required time window.",
+        )
+
+    source_text = normalize_text(matching_event.get("text"))
+
+    if not evidence_text:
+        add_warning(
+            warnings,
+            f"{evidence_type}_EVIDENCE_TEXT_MISSING",
+            "Evidence description is empty.",
+        )
+    elif source_text and (
+        not normalize_evidence_text(evidence_text)
+        or normalize_evidence_text(evidence_text)
+        not in normalize_evidence_text(source_text)
+    ):
+        add_warning(
+            warnings,
+            f"{evidence_type}_TEXT_NOT_MATCHED",
+            "Evidence text is not found in the referenced source event.",
+        )
+
+
+def normalize_evidence_text(value):
+    """Normalize punctuation and whitespace for source text matching."""
+    return " ".join(re.findall(r"\w+", normalize_text(value).casefold()))
 
 # ============================================================
 # 7. VALIDATE CLIFFHANGER EVIDENCE
 # ============================================================
 
-def validate_cliffhanger(
-    promo,
-    normalized_segments,
-    warnings,
-):
-    """
-    Check whether source evidence exists in the final three seconds.
 
-    This does not establish that the ending is unresolved.
-    """
+def validate_cliffhanger(promo, normalized_segments, warnings):
+    """Validate ending evidence and its source-event grounding."""
+
     cliffhanger = promo.get("cliffhanger", {})
 
     if not isinstance(cliffhanger, dict):
@@ -582,55 +696,25 @@ def validate_cliffhanger(
 
     last_segment = normalized_segments[-1]
 
-    promo_end = last_segment["end_time"]
-    window_start = promo_end - CLIFFHANGER_WINDOW_SECONDS
-
-    evidence_timestamp = safe_float(
-        cliffhanger.get("timestamp")
-    )
-
-    evidence_text = normalize_text(
-        cliffhanger.get("evidence_text")
-    )
-
     if not cliffhanger.get("identified"):
         add_warning(
             warnings,
             "CLIFFHANGER_NOT_IDENTIFIED",
-            "No ending evidence was identified.",
+            "No ending cliffhanger evidence was identified.",
         )
         return
 
-    if not evidence_text:
-        add_warning(
-            warnings,
-            "CLIFFHANGER_EVIDENCE_TEXT_MISSING",
-            (
-                "Ending is marked identified but has no "
-                "evidence text."
-            ),
-        )
+    promo_end = last_segment["end_time"]
 
-    if evidence_timestamp is None:
-        add_warning(
-            warnings,
-            "CLIFFHANGER_TIMESTAMP_MISSING",
-            "Ending evidence has no valid timestamp.",
-        )
-        return
-
-    if (
-        evidence_timestamp < window_start
-        or evidence_timestamp > promo_end
-    ):
-        add_warning(
-            warnings,
-            "CLIFFHANGER_OUTSIDE_ENDING_WINDOW",
-            (
-                "Ending evidence is not located within the final "
-                "three seconds of the promo."
-            ),
-        )
+    validate_evidence_against_source(
+        promo=promo,
+        evidence=cliffhanger,
+        expected_segment=promo.get("segments", [])[-1],
+        window_start=promo_end - CLIFFHANGER_WINDOW_SECONDS,
+        window_end=promo_end,
+        evidence_type="CLIFFHANGER",
+        warnings=warnings,
+    )
 
 
 # ============================================================
@@ -803,6 +887,24 @@ def validate_promo(promo):
             "must be assessed by promo_evaluator.py."
         ),
     )
+
+    if promo.get("requires_manual_review"):
+        add_warning(
+            warnings,
+            "EDITORIAL_REVIEW_REQUIRED",
+            "Review segment transitions, standalone clarity, hook, and ending before publication.",
+        )
+
+    if (
+        len(segments) > 2
+        and promo.get("construction_type") == "cross_episode_combination"
+        and not promo.get("connection_evidence_pair_ids")
+    ):
+        add_warning(
+            warnings,
+            "MULTI_SEGMENT_CONNECTION_EVIDENCE_MISSING",
+            "A cross-episode sequence with more than two segments needs explicit verified connection references.",
+        )
 
     validation_status = (
         "passed" if not errors else "failed"

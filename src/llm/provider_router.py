@@ -19,15 +19,15 @@ def get_provider(layer):
 
     layer = layer.lower()
 
-    if layer not in {"layer1", "layer2"}:
+    if layer not in {"layer1", "layer2", "promo_evaluation"}:
         raise ValueError(
-            "Layer must be either 'layer1' or 'layer2'."
+            "Layer must be 'layer1', 'layer2', or 'promo_evaluation'."
         )
 
     provider_key = f"{layer.upper()}_PROVIDER"
     provider_name = os.getenv(
         provider_key,
-        "groq"
+        "gemini" if layer == "promo_evaluation" else "groq"
     ).strip().lower()
 
     if provider_name == "groq":

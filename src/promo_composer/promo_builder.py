@@ -93,6 +93,15 @@ def standardize_candidate_segment(segment, order):
     if duration is None:
         return None
 
+    source_events = segment.get("source_events", [])
+    source_text = normalize_text(segment.get("text"))
+    if not source_text and source_events:
+        source_text = " ".join(
+            normalize_text(event.get("text"))
+            for event in source_events
+            if isinstance(event, dict) and normalize_text(event.get("text"))
+        )
+
     return {
         "segment_order": order,
         "segment_id": segment.get("segment_id"),
@@ -105,8 +114,8 @@ def standardize_candidate_segment(segment, order):
         "end_time": safe_float(segment.get("end_time")),
         "duration": duration,
         "event_ids": segment.get("event_ids", []),
-        "source_events": segment.get("source_events", []),
-        "text": normalize_text(segment.get("text")),
+        "source_events": source_events,
+        "text": source_text,
     }
 
 
@@ -305,7 +314,7 @@ def build_hook_metadata(segments):
         "time_window_seconds": HOOK_WINDOW_SECONDS,
         "evidence_event_id": event["event_id"],
         "episode": event["episode"],
-        "timestamp": event["start_time"],
+        "timestamp": event["overlap_start"],
         "evidence_text": event["text"],
         "description": (
             "Source screenplay event occurring within the "
@@ -344,7 +353,7 @@ def build_cliffhanger_metadata(segments):
         "time_window_seconds": CLIFFHANGER_WINDOW_SECONDS,
         "evidence_event_id": event["event_id"],
         "episode": event["episode"],
-        "timestamp": event["end_time"],
+        "timestamp": event["overlap_end"],
         "evidence_text": event["text"],
         "description": (
             "Source screenplay event occurring within the "
@@ -441,10 +450,10 @@ def build_multi_segment_promo(combination):
         source_segments,
         start=1,
     ):
-        standardized = standardize_combination_segment(
-            segment,
-            order=order,
-        )
+        if segment.get("source_type") == "layer2_candidate":
+            standardized = standardize_candidate_segment(segment, order=order)
+        else:
+            standardized = standardize_combination_segment(segment, order=order)
 
         if not standardized:
             return None
@@ -472,10 +481,14 @@ def build_multi_segment_promo(combination):
             episodes.append(episode)
 
     combination_id = combination.get("combination_id")
+    if len(episodes) > 1:
+        construction_type = "cross_episode_combination"
+    else:
+        construction_type = "same_episode_multi_segment"
 
     return {
         "promo_id": f"PROMO_{combination_id}",
-        "construction_type": "cross_episode_combination",
+        "construction_type": construction_type,
         "source_combination_id": combination_id,
         "segments": standardized_segments,
         "segment_count": len(standardized_segments),
@@ -508,6 +521,9 @@ def build_multi_segment_promo(combination):
         ),
         "requires_manual_review": combination.get(
             "requires_manual_review", False
+        ),
+        "connection_evidence_pair_ids": combination.get(
+            "connection_evidence_pair_ids", []
         ),
         "validation_status": "pending",
         "evaluation_status": "pending",
@@ -547,6 +563,13 @@ def build_promos(
     combinations = selection_results.get(
         "cross_episode_combinations", []
     )
+    same_episode_combinations = selection_results.get(
+        "same_episode_combinations", []
+    )
+    hub_montages = selection_results.get("verified_hub_montages", [])
+    all_combinations = (
+        combinations + same_episode_combinations + hub_montages
+    )
 
     print("\n========== PROMO BUILDER ==========")
 
@@ -557,7 +580,7 @@ def build_promos(
 
     print(
         f"Cross-episode combinations received: "
-        f"{len(combinations)}"
+        f"{len(all_combinations)}"
     )
 
     promos = []
@@ -587,7 +610,7 @@ def build_promos(
     # 2. Build cross-episode promos
     # --------------------------------------------------------
 
-    for combination in combinations[:max_combination_promos]:
+    for combination in all_combinations[:max_combination_promos]:
         promo = build_multi_segment_promo(combination)
 
         if promo:
@@ -600,7 +623,7 @@ def build_promos(
 
             rejected.append({
                 "source_id": combination.get("combination_id"),
-                "source_type": "cross_episode_combination",
+                "source_type": combination.get("source_type"),
                 "actual_duration": duration,
                 "reason": (
                     "Invalid timestamps, insufficient segments, "
@@ -629,13 +652,14 @@ def build_promos(
 
     multi_promos = [
         promo for promo in promos
-        if promo["construction_type"]
-        == "cross_episode_combination"
+        if len(promo.get("segments", [])) > 1
     ]
 
     statistics = {
         "individual_segments_received": len(candidate_segments),
         "cross_episode_combinations_received": len(combinations),
+        "same_episode_combinations_received": len(same_episode_combinations),
+        "verified_hub_montages_received": len(hub_montages),
         "single_segment_promos_built": len(single_promos),
         "multi_segment_promos_built": len(multi_promos),
         "total_promos_built": len(promos),

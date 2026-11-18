@@ -178,16 +178,16 @@ def validate_evaluation(result, candidate_data):
     return result
 
 
-def run_layer2_evaluation(episode_number=22):
+def run_layer2_evaluation(episode_number=22, output_dir=OUTPUT_DIR):
     """Run Layer 2 evaluation for the requested episode."""
 
     candidates_path = (
-        OUTPUT_DIR
+        Path(output_dir)
         / f"candidates_episode{episode_number}.json"
     )
 
     output_path = (
-        OUTPUT_DIR
+        Path(output_dir)
         / f"layer2_episode{episode_number}_evaluation.json"
     )
 
